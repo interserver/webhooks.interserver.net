@@ -1,4 +1,5 @@
 vendor/
+src/config.php
 composer.lock
 .phpunit.result.cache
 log
