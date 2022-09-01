@@ -1,0 +1,12 @@
+parameters:
+	checkMissingIterableValueType: false
+	level: 6
+	paths:
+		- .
+	excludes_analyse:
+		- vendor
+		- examples
+		- public
+	ignoreErrors:
+		- message: "/Access to an undefined property object::.*/"
+		  path: src/*.php

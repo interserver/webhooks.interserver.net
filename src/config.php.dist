@@ -1,0 +1,22 @@
+<?php
+declare(strict_types=1);
+
+// must match with github webhook secret, verified with hmac
+define("GITHUB_WEBHOOKS_SECRET", 'mysecret');
+
+// Channel Name => Webhook mappings
+$rocketChatChannels = [
+	'notifications' => 'https://chat.mydomain/hooks/secreturl',
+	'general' => 'https://chat.mydomain/hooks/secreturl',
+];
+
+// Webhook Event + Repo => Channel Name mappings
+$githubWebhooks = [
+	// catch all events
+	'*' => [
+		'detain/*' => 'notifications',
+		'myadmin-plugins/*' => 'notifications',
+		// catch all repos
+		'*' => 'general'
+	],
+];
