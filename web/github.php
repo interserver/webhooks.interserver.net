@@ -53,6 +53,17 @@ try {
 	if (empty($Message))
 		throw new Exception('Empty message, not sending.');
 	switch ($EventType) {
+        case 'issues':
+            if ($Message['action'] == 'opened') {
+                $ChatMsg = "[{$User}](https://github.com/{$User}) opened a new [Issue](https://github.com/{$RepositoryName}/issues/{$Message['issue']['number']}) for [{$RepositoryName}](https://github.com/{$RepositoryName}) _{$Message['issue']['title']}_.";
+                $Msg['text'] = $ChatMsg;
+                SendToRocketChat($rocketChatChannels['int-dev'], $Msg);
+                SendToRocketChat($rocketChatChannels['notifications'], $Msg);
+            } else {
+                $ChatMsg = "{$User} triggered a {$EventType} event ".(isset($Message['action']) ? $Message['action'].' action ' : '')." notification on https://github.com/{$RepositoryName} ".(isset($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '').".";
+                $Msg['text'] = $ChatMsg;
+                SendToRocketChat($rocketChatChannels['notifications'], $Msg);
+            }
 		case 'push':
 			$Branch = str_replace('refs/heads/', '', $Message['ref']);
 			$CommitMsg = $Message['head_commit']['message'];
