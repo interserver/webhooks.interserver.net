@@ -57,19 +57,22 @@ try {
             if ($Message['action'] == 'opened') {
                 $ChatMsg = "[{$User}](https://github.com/{$User}) opened a new [Issue](https://github.com/{$RepositoryName}/issues/{$Message['issue']['number']}) for [{$RepositoryName}](https://github.com/{$RepositoryName}) _{$Message['issue']['title']}_.";
                 $Msg['text'] = $ChatMsg;
+//error_log($Msg['text']);
                 SendToRocketChat($rocketChatChannels['int-dev'], $Msg);
                 SendToRocketChat($rocketChatChannels['notifications'], $Msg);
             } else {
                 $ChatMsg = "{$User} triggered a {$EventType} event ".(isset($Message['action']) ? $Message['action'].' action ' : '')." notification on https://github.com/{$RepositoryName} ".(isset($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '').".";
                 $Msg['text'] = $ChatMsg;
+//error_log($Msg['text']);
                 SendToRocketChat($rocketChatChannels['notifications'], $Msg);
             }
 		case 'push':
-			$Branch = str_replace('refs/heads/', '', $Message['ref']);
+			$Branch = isset($Message['ref']) && !is_null($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '';
 			$CommitMsg = $Message['head_commit']['message'];
 			$CommitCount = count($Message['commits']);
 			$ChatMsg = "{$User} pushed ".($CommitCount == 1 ? 'a commit' : $CommitCount.' commits')." to https://github.com/{$RepositoryName} [*{$Branch}*]\n:notepad_spiral: {$CommitMsg}";
 			$Msg['text'] = $ChatMsg;
+//error_log($Msg['text']);
 			SendToRocketChat($rocketChatChannels['notifications'], $Msg);
 			break;
         case 'check_suite':
@@ -78,6 +81,7 @@ try {
 		default:
 			$ChatMsg = "{$User} triggered a {$EventType} event ".(isset($Message['action']) ? $Message['action'].' action ' : '')." notification on https://github.com/{$RepositoryName} ".(isset($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '').".";
             $Msg['text'] = $ChatMsg;
+//error_log($Msg['text']);
 			SendToRocketChat($rocketChatChannels['notifications'], $Msg);
 			break;
 	}
