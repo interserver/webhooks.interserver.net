@@ -68,7 +68,13 @@ try {
             }
 		case 'push':
 			$Branch = isset($Message['ref']) && !is_null($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '';
-			$CommitMsg = $Message['head_commit']['message'];
+            if (isset($Message['head_commit']['message'])) {
+                $CommitMsg = $Message['head_commit']['message'];
+            } elseif (isset($Message['data']['issue']['title'])) {
+                $CommitMsg = $Message['data']['issue']['title'];
+            } else {
+			    $CommitMsg = '';
+            }
 			$CommitCount = count($Message['commits']);
 			$ChatMsg = "{$User} pushed ".($CommitCount == 1 ? 'a commit' : $CommitCount.' commits')." to https://github.com/{$RepositoryName} [*{$Branch}*]\n:notepad_spiral: {$CommitMsg}";
 			$Msg['text'] = $ChatMsg;
