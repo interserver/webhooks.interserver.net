@@ -76,7 +76,7 @@ try {
 			    $CommitMsg = '';
             }
 			$CommitCount = count($Message['commits']);
-			$ChatMsg = "{$User} pushed ".($CommitCount == 1 ? 'a commit' : $CommitCount.' commits')." to https://github.com/{$RepositoryName} [*{$Branch}*]\n:notepad_spiral: {$CommitMsg}";
+			$ChatMsg = "{$Msg['alias']} pushed ".($CommitCount == 1 ? 'a commit' : $CommitCount.' commits')." to https://github.com/{$RepositoryName} [*{$Branch}*]\n:notepad_spiral: {$CommitMsg}";
 			$Msg['text'] = $ChatMsg;
 //error_log($Msg['text']);
 			SendToRocketChat($rocketChatChannels['notifications'], $Msg);
@@ -85,7 +85,7 @@ try {
         case 'check_run':
             break;
 		default:
-			$ChatMsg = "{$User} triggered a {$EventType} event ".(isset($Message['action']) ? $Message['action'].' action ' : '')." notification on https://github.com/{$RepositoryName} ".(isset($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '').".";
+			$ChatMsg = "{$Msg['alias']} triggered a {$EventType} event ".(isset($Message['action']) ? $Message['action'].' action ' : '')." notification on https://github.com/{$RepositoryName} ".(isset($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '').".";
             $Msg['text'] = $ChatMsg;
 //error_log($Msg['text']);
 			SendToRocketChat($rocketChatChannels['notifications'], $Msg);
