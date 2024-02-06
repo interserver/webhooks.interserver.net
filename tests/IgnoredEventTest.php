@@ -3,27 +3,27 @@ declare(strict_types=1);
 
 class IgnoredEventTest extends \PHPUnit\Framework\TestCase
 {
-	/**
-	 * @dataProvider ignoredEventProvider
+    /**
+     * @dataProvider ignoredEventProvider
      */
-	public function testForkEvent( string $Event ) : void
-	{
-		$this->expectException( IgnoredEventException::class );
-		
-		$Parser = new IrcConverter( $Event, (object)[] );
-		$Parser->GetMessage();
-	}
-	
-	/**
-	 * @return array<array<string>>
-	 */
-	public function ignoredEventProvider( ) : array
-	{
-		return [
-			[ 'fork' ],
-			[ 'watch' ],
-			[ 'star' ],
-			[ 'status' ],
-		];
-	}
+    public function testForkEvent(string $Event) : void
+    {
+        $this->expectException(IgnoredEventException::class);
+        
+        $Parser = new IrcConverter($Event, (object)[]);
+        $Parser->GetMessage();
+    }
+    
+    /**
+     * @return array<array<string>>
+     */
+    public function ignoredEventProvider() : array
+    {
+        return [
+            [ 'fork' ],
+            [ 'watch' ],
+            [ 'star' ],
+            [ 'status' ],
+        ];
+    }
 }

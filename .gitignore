@@ -3,3 +3,4 @@ src/config.php
 composer.lock
 .phpunit.result.cache
 log
+.php-cs-fixer.cache
