@@ -78,7 +78,7 @@ try {
             } else {
                 $CommitMsg = '';
             }
-            $CommitCount = count($Message['commits']);
+            $CommitCount = isset($Message['commits']) ? count($Message['commits']) : 1;
             $ChatMsg = "{$Msg['alias']} pushed ".($CommitCount == 1 ? 'a commit' : $CommitCount.' commits')." to https://github.com/{$RepositoryName} [*{$Branch}*]\n:notepad_spiral: {$CommitMsg}";
             $Msg['text'] = $ChatMsg;
 //error_log($Msg['text']);
