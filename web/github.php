@@ -87,6 +87,7 @@ try {
         case 'check_suite':
         case 'check_run':
         case 'workflow_run':
+        case 'workflow_job':
             break;
         default:
             $ChatMsg = "{$Msg['alias']} triggered a {$EventType} event ".(isset($Message['action']) ? $Message['action'].' action ' : '')." notification on https://github.com/{$RepositoryName} ".(isset($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '').".";
