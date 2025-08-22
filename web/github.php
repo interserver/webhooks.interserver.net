@@ -129,7 +129,7 @@ try {
                      . "([details]({$Url}))";
 
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg);
+            //SendToChat('notifications', $Msg);
             break;
 
         case 'workflow_run':
