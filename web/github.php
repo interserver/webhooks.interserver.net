@@ -144,7 +144,7 @@ try {
                      . "([view run]({$Url}))";
 
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg);
+            //SendToChat('notifications', $Msg);
             break;
 
         default:
