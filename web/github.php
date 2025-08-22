@@ -193,9 +193,12 @@ function WildMatch(string $string, string $expression) : bool
 function SendToChat(string $Where, array $Payload) : bool
 {
     global $chatChannels;
-    $Url = $chatChannels['rocketchat'][$Where];
-    $c = curl_init();
-    curl_setopt_array($c, [
+    $useRC = true;
+    $useTeams = false;
+    if ($useRC === true) {
+        $Url = $chatChannels['rocketchat'][$Where];
+        $c = curl_init();
+        curl_setopt_array($c, [
         CURLOPT_USERAGENT      => 'https://github.com/xPaw/GitHub-WebHook',
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => 0,
@@ -207,14 +210,16 @@ function SendToChat(string $Where, array $Payload) : bool
         CURLOPT_HTTPHEADER     => [
             'Content-Type: application/json',
         ],
-    ]);
-    curl_exec($c);
-    $Code = curl_getinfo($c, CURLINFO_HTTP_CODE);
-    curl_close($c);
-    //error_log('Rocket Chat HTTP ' . $Code . PHP_EOL);
-    $c = curl_init();
-    $Url = $chatChannels['teams'][$Where];
-    curl_setopt_array($c, [
+        ]);
+        curl_exec($c);
+        $Code = curl_getinfo($c, CURLINFO_HTTP_CODE);
+        curl_close($c);
+        error_log('Rocket Chat HTTP ' . $Code . PHP_EOL);
+    }
+    if ($useTeams === true) {
+        $c = curl_init();
+        $Url = $chatChannels['teams'][$Where];
+        curl_setopt_array($c, [
         CURLOPT_USERAGENT      => 'https://github.com/xPaw/GitHub-WebHook',
         CURLOPT_RETURNTRANSFER => true,
         CURLOPT_FOLLOWLOCATION => 0,
@@ -229,10 +234,11 @@ function SendToChat(string $Where, array $Payload) : bool
         CURLOPT_HTTPHEADER     => [
             'Content-Type: application/json',
         ],
-    ]);
-    curl_exec($c);
-    $Code = curl_getinfo($c, CURLINFO_HTTP_CODE);
-    curl_close($c);
+        ]);
+       curl_exec($c);
+        $Code = curl_getinfo($c, CURLINFO_HTTP_CODE);
+        curl_close($c);
+    }
 
     return $Code >= 200 && $Code < 300;
 }
