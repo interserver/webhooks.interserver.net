@@ -58,101 +58,44 @@ try {
 
     switch ($EventType) {
         case 'issues':
-            $Issue = $Message['issue'];
-            $IssueUrl = $Issue['html_url'];
-            $IssueTitle = $Issue['title'];
-            $Action = $Message['action'];
-
-            $ChatMsg = "🐛 [{$User}](https://github.com/{$User}) **{$Action}** issue [#{$Issue['number']} {$IssueTitle}]({$IssueUrl}) "
-                     . "in [{$RepositoryName}](https://github.com/{$RepositoryName}).";
-
-            if (!empty($Issue['body'])) {
-                $ChatMsg .= "\n\n> " . substr($Issue['body'], 0, 200) . (strlen($Issue['body']) > 200 ? "…" : "");
+            if ($Message['action'] == 'opened') {
+                $ChatMsg = "[{$User}](https://github.com/{$User}) opened a new [Issue](https://github.com/{$RepositoryName}/issues/{$Message['issue']['number']}) for [{$RepositoryName}](https://github.com/{$RepositoryName}) _{$Message['issue']['title']}_.";
+                $Msg['text'] = $ChatMsg;
+                //error_log($Msg['text']);
+                SendToChat('int-dev', $Msg);
+            } else {
+                $ChatMsg = "{$User} triggered a {$EventType} event ".(isset($Message['action']) ? $Message['action'].' action ' : '')." notification on https://github.com/{$RepositoryName} ".(isset($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '').".";
+                $Msg['text'] = $ChatMsg;
+                //error_log($Msg['text']);
+                SendToChat('notifications', $Msg);
             }
-
-            $Msg['text'] = $ChatMsg;
-            SendToChat('int-dev', $Msg);
-            break;
-
-        case 'pull_request':
-            $PR = $Message['pull_request'];
-            $Action = $Message['action'];
-            $PRUrl = $PR['html_url'];
-            $PRTitle = $PR['title'];
-
-            $ChatMsg = "🔀 [{$User}](https://github.com/{$User}) **{$Action}** pull request "
-                     . "[#{$PR['number']} {$PRTitle}]({$PRUrl}) "
-                     . "in [{$RepositoryName}](https://github.com/{$RepositoryName}).";
-
-            if (!empty($PR['body'])) {
-                $ChatMsg .= "\n\n> " . substr($PR['body'], 0, 200) . (strlen($PR['body']) > 200 ? "…" : "");
-            }
-
-            $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg);
-            break;
-
+            // no break
         case 'push':
-            $Branch = isset($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '';
+            $Branch = isset($Message['ref']) && !is_null($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '';
+            if (isset($Message['head_commit']['message'])) {
+                $CommitMsg = $Message['head_commit']['message'];
+            } elseif (isset($Message['data']['issue']['title'])) {
+                $CommitMsg = $Message['data']['issue']['title'];
+            } else {
+                $CommitMsg = '';
+            }
             $CommitCount = isset($Message['commits']) ? count($Message['commits']) : 1;
-            $Commits = [];
-
-            if (!empty($Message['commits'])) {
-                foreach ($Message['commits'] as $Commit) {
-                    $Commits[] = "• [".substr($Commit['id'], 0, 7)."]({$Commit['url']}) _{$Commit['message']}_ "
-                               . "by {$Commit['author']['name']}";
-                }
-            }
-
-            $ChatMsg = "📦 {$Msg['alias']} pushed {$CommitCount} "
-                     . ($CommitCount === 1 ? "commit" : "commits")
-                     . " to [{$RepositoryName}](https://github.com/{$RepositoryName}) "
-                     . "[`{$Branch}`](https://github.com/{$RepositoryName}/tree/{$Branch})";
-
-            if (!empty($Commits)) {
-                $ChatMsg .= "\n" . implode("\n", $Commits);
-            }
-
+            $ChatMsg = "{$Msg['alias']} pushed ".($CommitCount == 1 ? 'a commit' : $CommitCount.' commits')." to https://github.com/{$RepositoryName} [*{$Branch}*]\n🕮 {$CommitMsg}";
             $Msg['text'] = $ChatMsg;
+//error_log($Msg['text']);
             SendToChat('notifications', $Msg);
             break;
-
         case 'check_suite':
         case 'check_run':
-            $Status = $Message['check_suite']['conclusion'] ?? $Message['check_run']['conclusion'] ?? 'in_progress';
-            $Name = $Message['check_suite']['app']['name'] ?? $Message['check_run']['name'];
-            $Url = $Message['check_suite']['url'] ?? $Message['check_run']['html_url'];
-
-            $Emoji = $Status === 'success' ? "✅" : ($Status === 'failure' ? "❌" : "⏳");
-            $ChatMsg = "{$Emoji} Check **{$Name}** {$Status} "
-                     . "for [{$RepositoryName}](https://github.com/{$RepositoryName}) "
-                     . "([details]({$Url}))";
-
-            $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg);
-            break;
-
+        case 'create':
+        case 'pull_request':
         case 'workflow_run':
         case 'workflow_job':
-            $Workflow = $Message['workflow']['name'] ?? $Message['workflow_job']['name'] ?? "Workflow";
-            $Status = $Message['workflow_run']['conclusion'] ?? $Message['workflow_job']['conclusion'] ?? "in_progress";
-            $Url = $Message['workflow_run']['html_url'] ?? "#";
-            $Emoji = $Status === 'success' ? "✅" : ($Status === 'failure' ? "❌" : "⏳");
-
-            $ChatMsg = "{$Emoji} Workflow **{$Workflow}** {$Status} "
-                     . "for [{$RepositoryName}](https://github.com/{$RepositoryName}) "
-                     . "([view run]({$Url}))";
-
-            $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg);
             break;
-
         default:
-            $ChatMsg = "ℹ️ {$Msg['alias']} triggered a **{$EventType}** event "
-                     . (isset($Message['action']) ? "({$Message['action']}) " : "")
-                     . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
-
+            $ChatMsg = "{$Msg['alias']} triggered a {$EventType} event ".(isset($Message['action']) ? $Message['action'].' action ' : '')." notification on https://github.com/{$RepositoryName} ".(isset($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '').".";
             $Msg['text'] = $ChatMsg;
+//error_log($Msg['text']);
             SendToChat('notifications', $Msg);
             break;
     }
