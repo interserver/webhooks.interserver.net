@@ -67,7 +67,7 @@ try {
                      . "in [{$RepositoryName}](https://github.com/{$RepositoryName}).";
 
             if (!empty($Issue['body'])) {
-                $ChatMsg .= "\n\n> " . substr($Issue['body'], 0, 200) . (strlen($Issue['body']) > 200 ? "…" : "");
+                $ChatMsg .= "\n\n> " . substr($Issue['body'], 0, 500) . (strlen($Issue['body']) > 500 ? "…" : "");
             }
 
             $Msg['text'] = $ChatMsg;
@@ -85,7 +85,7 @@ try {
                      . "in [{$RepositoryName}](https://github.com/{$RepositoryName}).";
 
             if (!empty($PR['body'])) {
-                $ChatMsg .= "\n\n> " . substr($PR['body'], 0, 200) . (strlen($PR['body']) > 200 ? "…" : "");
+                $ChatMsg .= "\n\n> " . substr($PR['body'], 0, 500) . (strlen($PR['body']) > 500 ? "…" : "");
             }
 
             $Msg['text'] = $ChatMsg;
