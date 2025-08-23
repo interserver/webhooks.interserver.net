@@ -212,7 +212,8 @@ function SendToChat(string $Where, array $Payload) : bool
             'Content-Type: application/json',
         ],
         ]);
-        curl_exec($c);
+        $out = curl_exec($c);
+	error_log("Out: {$out}");
         $Code = curl_getinfo($c, CURLINFO_HTTP_CODE);
         curl_close($c);
         error_log('Rocket Chat HTTP ' . $Code . PHP_EOL);
