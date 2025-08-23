@@ -192,9 +192,10 @@ function WildMatch(string $string, string $expression) : bool
 
 function SendToChat(string $Where, array $Payload) : bool
 {
+    error_log("Sending Payload ".json_encode($PayLoad)." to {$Where}");
     global $chatChannels;
     $useRC = true;
-    $useTeams = false;
+    $useTeams = true;
     if ($useRC === true) {
         $Url = $chatChannels['rocketchat'][$Where];
         $c = curl_init();
