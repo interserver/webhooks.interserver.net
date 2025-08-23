@@ -50,7 +50,7 @@ try {
     } elseif (isset($Message['commit']) && isset($Message['commit']['commit']['author']['name'])) {
         $Msg['alias'] = $Message['commit']['commit']['author']['name'];
     }
-    file_put_contents(__DIR__.'/../log/'.date('Ymd_His').'_'.$EventType.(isset($Message['action']) ? '_'.$Message['action'] : '').'_'.$User.'_'.str_replace(['/', '-', ' '], ['_', '_', '_'], $RepositoryName).'.json', json_encode($log, JSON_PRETTY_PRINT));
+    file_put_contents(__DIR__.'/../log/'.date('Ymd_His').'_'.$EventType.(isset($Message['action']) ? '_'.$Message['action'] : '').'_'.$User.'_'.str_replace(['/', '-', ' '], ['_', '_', '_'], $RepositoryName).'.json', json_encode($log, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE |  JSON_UNESCAPED_SLASHES));
     if (empty($Message)) {
         throw new Exception('Empty message, not sending.');
     }
@@ -207,7 +207,7 @@ function SendToChat(string $Where, array $Payload) : bool
         CURLOPT_CONNECTTIMEOUT => 30,
         CURLOPT_URL            => $Url,
         CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => json_encode($Payload),
+        CURLOPT_POSTFIELDS     => json_encode($Payload, JSON_UNESCAPED_UNICODE |  JSON_UNESCAPED_SLASHES),
         CURLOPT_HTTPHEADER     => [
             'Content-Type: application/json',
         ],
@@ -231,7 +231,7 @@ function SendToChat(string $Where, array $Payload) : bool
         CURLOPT_POSTFIELDS     => json_encode([
             'type' => 'message',
             'message' => $Payload['text']
-        ]),
+        ], JSON_UNESCAPED_UNICODE |  JSON_UNESCAPED_SLASHES),
         CURLOPT_HTTPHEADER     => [
             'Content-Type: application/json',
         ],
