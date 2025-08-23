@@ -192,7 +192,7 @@ function WildMatch(string $string, string $expression) : bool
 
 function SendToChat(string $Where, array $Payload) : bool
 {
-    error_log("Sending Payload ".json_encode($PayLoad)." to {$Where}");
+    error_log("Sending Payload ".json_encode($Payload)." to {$Where}");
     global $chatChannels;
     $useRC = true;
     $useTeams = true;
