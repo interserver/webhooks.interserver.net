@@ -202,7 +202,7 @@ function SendToChat(string $Where, array $Payload) : bool
         curl_setopt_array($c, [
         CURLOPT_USERAGENT      => 'https://github.com/xPaw/GitHub-WebHook',
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => 0,
+        CURLOPT_FOLLOWLOCATION => 1,
         CURLOPT_TIMEOUT        => 30,
         CURLOPT_CONNECTTIMEOUT => 30,
         CURLOPT_URL            => $Url,
@@ -213,7 +213,7 @@ function SendToChat(string $Where, array $Payload) : bool
         ],
         ]);
         $out = curl_exec($c);
-	error_log("Out: {$out}");
+	error_log("{$Url} Out: {$out}");
         $Code = curl_getinfo($c, CURLINFO_HTTP_CODE);
         curl_close($c);
         error_log('Rocket Chat HTTP ' . $Code . PHP_EOL);
@@ -224,7 +224,7 @@ function SendToChat(string $Where, array $Payload) : bool
         curl_setopt_array($c, [
         CURLOPT_USERAGENT      => 'https://github.com/xPaw/GitHub-WebHook',
         CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => 0,
+        CURLOPT_FOLLOWLOCATION => 1,
         CURLOPT_TIMEOUT        => 30,
         CURLOPT_CONNECTTIMEOUT => 30,
         CURLOPT_URL            => $Url,
