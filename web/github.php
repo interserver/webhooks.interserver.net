@@ -55,9 +55,16 @@ try {
         throw new Exception('Empty message, not sending.');
     }
 
+    //http_response_code(200);
+    //exit;
+
+
 
     switch ($EventType) {
         case 'issues':
+		if ($RepositoryName == 'interserver/mailbaby-api-samples') {
+			break;
+		}
             $Issue = $Message['issue'];
             $IssueUrl = $Issue['html_url'];
             $IssueTitle = $Issue['title'];
@@ -71,7 +78,7 @@ try {
             }
 
             $Msg['text'] = $ChatMsg;
-            SendToChat('int-dev', $Msg);
+            SendToChat('notifications', $Msg);
             break;
 
         case 'pull_request':
