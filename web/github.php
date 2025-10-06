@@ -61,8 +61,11 @@ try {
 
 
     switch ($EventType) {
+	$useRC = true;
+	$useTeams = true;
         case 'issues':
 		if ($RepositoryName == 'interserver/mailbaby-api-samples') {
+			$useTeams = false;
 			break;
 		}
             $Issue = $Message['issue'];
@@ -78,7 +81,7 @@ try {
             }
 
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg);
+            SendToChat('notifications', $Msg, $useRC, $useTeams);
             break;
 
         case 'pull_request':
@@ -96,7 +99,7 @@ try {
             }
 
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg);
+            SendToChat('notifications', $Msg, $useRC, $useTeams);
             break;
 
         case 'push':
@@ -121,7 +124,7 @@ try {
             }
 
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg);
+            SendToChat('notifications', $Msg, $useRC, $useTeams);
             break;
 
         case 'check_suite':
@@ -136,7 +139,7 @@ try {
                      . "([details]({$Url}))";
 
             $Msg['text'] = $ChatMsg;
-            //SendToChat('notifications', $Msg);
+            //SendToChat('notifications', $Msg, $useRC, $useTeams);
             break;
 
         case 'workflow_run':
@@ -151,7 +154,7 @@ try {
                      . "([view run]({$Url}))";
 
             $Msg['text'] = $ChatMsg;
-            //SendToChat('notifications', $Msg);
+            //SendToChat('notifications', $Msg, $useRC, $useTeams);
             break;
 
         default:
@@ -160,7 +163,7 @@ try {
                      . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
 
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg);
+            SendToChat('notifications', $Msg, $useRC, $useTeams);
             break;
     }
     /*
@@ -197,12 +200,10 @@ function WildMatch(string $string, string $expression) : bool
     return preg_match('/^' . $expression . '$/', $string) === 1;
 }
 
-function SendToChat(string $Where, array $Payload) : bool
+function SendToChat(string $Where, array $Payload, $useRC = true, $useTeams = true) : bool
 {
     error_log("Sending Payload ".json_encode($Payload)." to {$Where}");
     global $chatChannels;
-    $useRC = true;
-    $useTeams = true;
     if ($useRC === true) {
         $Url = $chatChannels['rocketchat'][$Where];
         $c = curl_init();
