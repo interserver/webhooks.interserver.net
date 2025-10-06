@@ -62,12 +62,12 @@ try {
 
     $useRC = true;
     $useTeams = true;
+    switch ($EventType) {
+        case 'issues':
 		if ($RepositoryName == 'interserver/mailbaby-api-samples') {
 			$useTeams = false;
 			break;
 		}
-    switch ($EventType) {
-        case 'issues':
             $Issue = $Message['issue'];
             $IssueUrl = $Issue['html_url'];
             $IssueTitle = $Issue['title'];
