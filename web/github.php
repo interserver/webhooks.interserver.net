@@ -62,12 +62,12 @@ try {
 
     $useRC = true;
     $useTeams = true;
-    switch ($EventType) {
-        case 'issues':
 		if ($RepositoryName == 'interserver/mailbaby-api-samples') {
 			$useTeams = false;
 			break;
 		}
+    switch ($EventType) {
+        case 'issues':
             $Issue = $Message['issue'];
             $IssueUrl = $Issue['html_url'];
             $IssueTitle = $Issue['title'];
@@ -200,7 +200,7 @@ function WildMatch(string $string, string $expression) : bool
     return preg_match('/^' . $expression . '$/', $string) === 1;
 }
 
-function SendToChat(string $Where, array $Payload, $useRC = true, $useTeams = true) : bool
+function SendToChat(string $Where, array $Payload, bool $useRC = true, bool $useTeams = true) : bool
 {
     error_log("Sending Payload ".json_encode($Payload)." to {$Where}");
     global $chatChannels;
