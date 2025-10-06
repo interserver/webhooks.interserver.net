@@ -60,9 +60,9 @@ try {
 
 
 
+    $useRC = true;
+    $useTeams = true;
     switch ($EventType) {
-	$useRC = true;
-	$useTeams = true;
         case 'issues':
 		if ($RepositoryName == 'interserver/mailbaby-api-samples') {
 			$useTeams = false;
