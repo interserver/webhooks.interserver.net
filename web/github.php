@@ -156,6 +156,13 @@ try {
             $Msg['text'] = $ChatMsg;
             //SendToChat('notifications', $Msg, $useRC, $useTeams);
             break;
+	case 'gollum':
+            $ChatMsg = "ℹ️ {$Msg['alias']} triggered a **{$EventType}** event "
+                     . (isset($Message['data']['pages'][0]['action']) ? "({$Message['data']['pages'][0]['action']} [{$Message['data']['pages'][0]['title']}]({$Message['data']['pages'][0]['html_url']})) " : "")
+                     . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
+            $Msg['text'] = $ChatMsg;
+            SendToChat('notifications', $Msg, $useRC, $useTeams);
+            break;
 
         default:
             $ChatMsg = "ℹ️ {$Msg['alias']} triggered a **{$EventType}** event "
