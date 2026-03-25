@@ -64,7 +64,7 @@ try {
     $useTeams = true;
     switch ($EventType) {
         case 'issues':
-		if ($RepositoryName == 'interserver/mailbaby-api-samples') {
+		if (in_array($RepositoryName, ['interserver/mailbaby-api-samples', 'detain/interserver-api-samples'])) {
 			$useTeams = false;
 			break;
 		}
