@@ -76,6 +76,20 @@ try {
             $ChatMsg = "🐛 [{$User}](https://github.com/{$User}) **{$Action}** issue [#{$Issue['number']} {$IssueTitle}]({$IssueUrl}) "
                      . "in [{$RepositoryName}](https://github.com/{$RepositoryName}).";
 
+            if (!empty($Issue['labels'])) {
+                $Labels = array_map(fn($l) => "`{$l['name']}`", $Issue['labels']);
+                $ChatMsg .= " " . implode(' ', $Labels);
+            }
+
+            if ($Action === 'closed' && !empty($Issue['state_reason'])) {
+                $ChatMsg .= " _(reason: {$Issue['state_reason']})_";
+            }
+
+            if ($Action === 'edited' && !empty($Message['changes'])) {
+                $Changed = array_keys($Message['changes']);
+                $ChatMsg .= " _(changed: " . implode(', ', $Changed) . ")_";
+            }
+
             if (!empty($Issue['body'])) {
                 $ChatMsg .= "\n\n> " . substr($Issue['body'], 0, 500) . (strlen($Issue['body']) > 500 ? "…" : "");
             }
@@ -89,10 +103,41 @@ try {
             $Action = $Message['action'];
             $PRUrl = $PR['html_url'];
             $PRTitle = $PR['title'];
+            $HeadBranch = $PR['head']['ref'] ?? '';
+            $BaseBranch = $PR['base']['ref'] ?? '';
 
             $ChatMsg = "🔀 [{$User}](https://github.com/{$User}) **{$Action}** pull request "
                      . "[#{$PR['number']} {$PRTitle}]({$PRUrl}) "
-                     . "in [{$RepositoryName}](https://github.com/{$RepositoryName}).";
+                     . "in [{$RepositoryName}](https://github.com/{$RepositoryName})";
+
+            if ($HeadBranch && $BaseBranch) {
+                $ChatMsg .= " (`{$HeadBranch}` → `{$BaseBranch}`)";
+            }
+            $ChatMsg .= ".";
+
+            if (!empty($PR['draft'])) {
+                $ChatMsg .= " _(draft)_";
+            }
+
+            if ($Action === 'closed' && !empty($PR['merged'])) {
+                $ChatMsg .= " ✅ Merged.";
+            }
+
+            if (in_array($Action, ['opened', 'reopened', 'closed']) && isset($PR['commits'])) {
+                $Stats = [];
+                if (!empty($PR['commits'])) {
+                    $Stats[] = "{$PR['commits']} commit" . ($PR['commits'] !== 1 ? "s" : "");
+                }
+                if (isset($PR['additions'], $PR['deletions'])) {
+                    $Stats[] = "+{$PR['additions']}/-{$PR['deletions']}";
+                }
+                if (!empty($PR['changed_files'])) {
+                    $Stats[] = "{$PR['changed_files']} file" . ($PR['changed_files'] !== 1 ? "s" : "");
+                }
+                if (!empty($Stats)) {
+                    $ChatMsg .= " _(" . implode(', ', $Stats) . ")_";
+                }
+            }
 
             if (!empty($PR['body'])) {
                 $ChatMsg .= "\n\n> " . substr($PR['body'], 0, 500) . (strlen($PR['body']) > 500 ? "…" : "");
@@ -109,8 +154,14 @@ try {
 
             if (!empty($Message['commits'])) {
                 foreach ($Message['commits'] as $Commit) {
-                    $Commits[] = "• [".substr($Commit['id'], 0, 7)."]({$Commit['url']}) _{$Commit['message']}_ "
-                               . "by {$Commit['author']['name']}";
+                    $CommitMsg = strtok($Commit['message'], "\n");
+                    $FileCounts = [];
+                    if (!empty($Commit['added'])) $FileCounts[] = '+' . count($Commit['added']);
+                    if (!empty($Commit['modified'])) $FileCounts[] = '~' . count($Commit['modified']);
+                    if (!empty($Commit['removed'])) $FileCounts[] = '-' . count($Commit['removed']);
+                    $FileInfo = !empty($FileCounts) ? ' _(' . implode(' ', $FileCounts) . ' files)_' : '';
+                    $Commits[] = "• [" . substr($Commit['id'], 0, 7) . "]({$Commit['url']}) _{$CommitMsg}_ "
+                               . "by {$Commit['author']['name']}{$FileInfo}";
                 }
             }
 
@@ -118,6 +169,10 @@ try {
                      . ($CommitCount === 1 ? "commit" : "commits")
                      . " to [{$RepositoryName}](https://github.com/{$RepositoryName}) "
                      . "[`{$Branch}`](https://github.com/{$RepositoryName}/tree/{$Branch})";
+
+            if (!empty($Message['compare'])) {
+                $ChatMsg .= " ([compare]({$Message['compare']}))";
+            }
 
             if (!empty($Commits)) {
                 $ChatMsg .= "\n" . implode("\n", $Commits);
@@ -132,11 +187,20 @@ try {
             $Status = $Message['check_suite']['conclusion'] ?? $Message['check_run']['conclusion'] ?? 'in_progress';
             $Name = $Message['check_suite']['app']['name'] ?? $Message['check_run']['name'];
             $Url = $Message['check_suite']['url'] ?? $Message['check_run']['html_url'];
+            $Branch = $Message['check_suite']['head_branch'] ?? $Message['check_run']['check_suite']['head_branch'] ?? '';
+            $CommitMsg = $Message['check_suite']['head_commit']['message'] ?? $Message['check_run']['check_suite']['head_commit']['message'] ?? '';
 
             $Emoji = $Status === 'success' ? "✅" : ($Status === 'failure' ? "❌" : "⏳");
             $ChatMsg = "{$Emoji} Check **{$Name}** {$Status} "
-                     . "for [{$RepositoryName}](https://github.com/{$RepositoryName}) "
-                     . "([details]({$Url}))";
+                     . "for [{$RepositoryName}](https://github.com/{$RepositoryName})";
+            if ($Branch) {
+                $ChatMsg .= " on `{$Branch}`";
+            }
+            $ChatMsg .= " ([details]({$Url}))";
+            if ($CommitMsg) {
+                $CommitMsg = strtok($CommitMsg, "\n");
+                $ChatMsg .= "\n> _{$CommitMsg}_";
+            }
 
             $Msg['text'] = $ChatMsg;
             //SendToChat('notifications', $Msg, $useRC, $useTeams);
@@ -144,22 +208,56 @@ try {
 
         case 'workflow_run':
         case 'workflow_job':
-            $Workflow = $Message['workflow']['name'] ?? $Message['workflow_job']['name'] ?? "Workflow";
-            $Status = $Message['workflow_run']['conclusion'] ?? $Message['workflow_job']['conclusion'] ?? "in_progress";
-            $Url = $Message['workflow_run']['html_url'] ?? "#";
-            $Emoji = $Status === 'success' ? "✅" : ($Status === 'failure' ? "❌" : "⏳");
+            $WorkflowName = $Message['workflow_run']['name'] ?? $Message['workflow']['name'] ?? $Message['workflow_job']['workflow_name'] ?? $Message['workflow_job']['name'] ?? "Workflow";
+            $Status = $Message['workflow_run']['conclusion'] ?? $Message['workflow_job']['conclusion'] ?? $Message['workflow_run']['status'] ?? $Message['workflow_job']['status'] ?? "in_progress";
+            $Url = $Message['workflow_run']['html_url'] ?? $Message['workflow_job']['html_url'] ?? "#";
+            $Branch = $Message['workflow_run']['head_branch'] ?? $Message['workflow_job']['head_branch'] ?? '';
+            $Emoji = $Status === 'success' ? "✅" : ($Status === 'failure' ? "❌" : ($Status === 'in_progress' ? "⏳" : "🔄"));
 
-            $ChatMsg = "{$Emoji} Workflow **{$Workflow}** {$Status} "
-                     . "for [{$RepositoryName}](https://github.com/{$RepositoryName}) "
-                     . "([view run]({$Url}))";
+            $ChatMsg = "{$Emoji} Workflow **{$WorkflowName}** {$Status} "
+                     . "for [{$RepositoryName}](https://github.com/{$RepositoryName})";
+            if ($Branch) {
+                $ChatMsg .= " on `{$Branch}`";
+            }
+            $ChatMsg .= " ([view run]({$Url}))";
+
+            if ($EventType === 'workflow_run' && !empty($Message['workflow_run']['head_commit']['message'])) {
+                $HeadCommitMsg = strtok($Message['workflow_run']['head_commit']['message'], "\n");
+                $ChatMsg .= "\n> _{$HeadCommitMsg}_";
+            }
+
+            if ($EventType === 'workflow_job' && !empty($Message['workflow_job']['steps'])) {
+                foreach ($Message['workflow_job']['steps'] as $Step) {
+                    if ($Step['status'] === 'in_progress') {
+                        $ChatMsg .= "\n> Step: _{$Step['name']}_";
+                        break;
+                    }
+                }
+            }
 
             $Msg['text'] = $ChatMsg;
             //SendToChat('notifications', $Msg, $useRC, $useTeams);
             break;
 	case 'gollum':
-            $ChatMsg = "ℹ️ {$Msg['alias']} triggered a **{$EventType}** event "
-                     . (isset($Message['data']['pages'][0]['action']) ? "({$Message['data']['pages'][0]['action']} [{$Message['data']['pages'][0]['title']}]({$Message['data']['pages'][0]['html_url']})) " : "")
-                     . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
+            $Pages = $Message['pages'] ?? [];
+            if (!empty($Pages)) {
+                $PageLines = [];
+                foreach ($Pages as $Page) {
+                    $PageAction = $Page['action'] ?? 'updated';
+                    $PageTitle = $Page['title'] ?? 'Unknown';
+                    $PageUrl = $Page['html_url'] ?? '';
+                    $Summary = !empty($Page['summary']) ? " — {$Page['summary']}" : '';
+                    $PageLines[] = "• **{$PageAction}** [{$PageTitle}]({$PageUrl}){$Summary}";
+                }
+                $PageCount = count($Pages);
+                $ChatMsg = "📝 [{$User}](https://github.com/{$User}) updated {$PageCount} wiki "
+                         . ($PageCount === 1 ? "page" : "pages")
+                         . " on [{$RepositoryName}](https://github.com/{$RepositoryName}):\n"
+                         . implode("\n", $PageLines);
+            } else {
+                $ChatMsg = "📝 [{$User}](https://github.com/{$User}) updated the wiki "
+                         . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
+            }
             $Msg['text'] = $ChatMsg;
             SendToChat('notifications', $Msg, $useRC, $useTeams);
             break;
