@@ -1,0 +1,2 @@
+📦 Pavel Djundik pushed 1 commit to [xPaw/GitHub-WebHook](https://github.com/xPaw/GitHub-WebHook) [`master`](https://github.com/xPaw/GitHub-WebHook/tree/master) ([compare](https://github.com/xPaw/GitHub-WebHook/compare/14e514deb5f8...8ddec647cc7a))
+• [8ddec64](https://github.com/xPaw/GitHub-WebHook/commit/8ddec647cc7a5a819669ad55d08cfabe49925311) _Add event tests that can be easily expanded to cover more events_ _(+4 ~1 files)_

@@ -1,0 +1,12 @@
+🐛 [mend-bolt-for-github[bot]](https://github.com/mend-bolt-for-github[bot]) **closed** issue [#118 markdown-it-14.1.0.tgz: 1 vulnerabilities (highest severity is: 0.0) - autoclosed](https://github.com/interserver/my/issues/118) in [interserver/my](https://github.com/interserver/my). `Mend: dependency security vulnerability` _(reason: completed)_
+
+> <details><summary><img src='https://whitesource-resources.whitesourcesoftware.com/vulnerability_details.png' width=19 height=20> Vulnerable Library - <b>markdown-it-14.1.0.tgz</b></summary>
+
+<p></p>
+<p>Library home page: <a href="https://registry.npmjs.org/markdown-it/-/markdown-it-14.1.0.tgz">https://registry.npmjs.org/markdown-it/-/markdown-it-14.1.0.tgz</a></p>
+<p>Path to dependency file: /package.json</p>
+<p>Path to vulnerable library: /package.json</p>
+<p>
+
+
+<p>Found in HEAD commit: <a href…

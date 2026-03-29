@@ -26,14 +26,14 @@ description: Adds a new GitHub event type case to the switch block in `web/githu
        $Url     = $Entity['html_url'] ?? '';
        $Title   = $Entity['title']   ?? $Entity['name'] ?? '';
 
-       $ChatMsg = "🔔 [{$User}](https://github.com/{$User}) **{$Action}** "
+       $ChatMsg = "\u{1F514} [{$User}](https://github.com/{$User}) **{$Action}** "
                 . "[{$Title}]({$Url}) "
                 . "in [{$RepositoryName}](https://github.com/{$RepositoryName}).";
 
        // Optional: append body preview (max 500 chars)
        if (!empty($Entity['body'])) {
            $ChatMsg .= "\n\n> " . substr($Entity['body'], 0, 500)
-                    . (strlen($Entity['body']) > 500 ? "…" : "");
+                    . (strlen($Entity['body']) > 500 ? "\u2026" : "");
        }
 
        $Msg['text'] = $ChatMsg;
@@ -71,7 +71,7 @@ description: Adds a new GitHub event type case to the switch block in `web/githu
 6. **Add a test fixture** under `tests/events/<event_name>/`:
    - `payload.json` — raw GitHub webhook payload (copy from GitHub delivery logs or docs)
    - `type.txt` — event name only, e.g. `your_event` (no trailing newline needed; `trim()` is applied)
-   - Note: `expected.bin` / `discord.json` are consumed by `IrcConverter`/`DiscordConverter` tests, not by `web/github.php` — add them only if those converters also need updating.
+   - `expected_text.txt` — expected chat message text; run `vendor/bin/phpunit tests/GithubMessageBuilderTest.php`, capture actual output, write to file
 
 7. **Run quality checks** to verify no syntax errors or style violations:
    ```bash
@@ -94,20 +94,20 @@ description: Adds a new GitHub event type case to the switch block in `web/githu
        $Url       = $Milestone['html_url'] ?? '';
        $Title     = $Milestone['title'] ?? '';
 
-       $ChatMsg = "🏁 [{$User}](https://github.com/{$User}) **{$Action}** "
+       $ChatMsg = "\u{1F3C1} [{$User}](https://github.com/{$User}) **{$Action}** "
                 . "milestone [{$Title}]({$Url}) "
                 . "in [{$RepositoryName}](https://github.com/{$RepositoryName}).";
 
        if (!empty($Milestone['description'])) {
            $ChatMsg .= "\n\n> " . substr($Milestone['description'], 0, 500)
-                    . (strlen($Milestone['description']) > 500 ? "…" : "");
+                    . (strlen($Milestone['description']) > 500 ? "\u2026" : "");
        }
 
        $Msg['text'] = $ChatMsg;
        SendToChat('notifications', $Msg, $useRC, $useTeams);
        break;
    ```
-3. Created `tests/events/milestone/payload.json` and `tests/events/milestone/type.txt` containing `milestone`.
+3. Created `tests/events/milestone/payload.json`, `tests/events/milestone/type.txt` (`milestone`), and `tests/events/milestone/expected_text.txt`.
 4. Ran `vendor/bin/phpstan analyse` — no errors.
 
 **Result:** `milestone` events POST to Rocket Chat and Teams with action, linked title, and optional description preview.

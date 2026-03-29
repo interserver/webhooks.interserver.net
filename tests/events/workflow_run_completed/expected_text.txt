@@ -1,0 +1,2 @@
+❌ Workflow **Electron Build & Release** failure for [detain/myadmin-client-vue](https://github.com/detain/myadmin-client-vue) on `electron` ([view run](https://github.com/detain/myadmin-client-vue/actions/runs/20621675667))
+> _updates_

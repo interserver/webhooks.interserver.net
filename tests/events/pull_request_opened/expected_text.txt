@@ -1,0 +1,3 @@
+🔀 [furmancapital](https://github.com/furmancapital) **opened** pull request [#4 Check in deployment scripts](https://github.com/interserver/hyperv/pull/4) in [interserver/hyperv](https://github.com/interserver/hyperv) (`deployment_scripts` → `main`). _(1 commit, +400/-1, 6 files)_
+
+> Check in deployment scripts

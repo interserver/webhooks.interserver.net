@@ -15,7 +15,7 @@ vendor/bin/php-cs-fixer fix
 ## Architecture
 
 - **Entry**: `web/github.php` (active) · `web/github-old.php` (legacy, RC-only)
-- **Core**: `src/GithubWebhook.php` · `src/IgnoredEventException.php` · `src/NotImplementedException.php`
+- **Core**: `src/GithubWebhook.php` · `src/GithubMessageBuilder.php` · `src/IgnoredEventException.php` · `src/NotImplementedException.php`
 - **Config**: `src/config.php` (gitignored) — defines `GITHUB_WEBHOOKS_SECRET` and `$chatChannels['rocketchat']` / `$chatChannels['teams']`
 - **Logs**: `log/` — JSON files named `Ymd_His_eventtype_action_user_repo.json`
 - **Tests**: `tests/` via `phpunit.xml` · fixtures in `tests/events/{event_name}/`
@@ -67,8 +67,9 @@ SendToChat(string $Where, array $Payload, bool $useRC = true, bool $useTeams = t
 ## Test Fixtures
 
 Each event type has a directory under `tests/events/{event_name}/` containing:
-- A raw GitHub webhook payload JSON file
-- `type.txt` with the event name (see `tests/events/commit_comment/type.txt`)
+- `payload.json` — raw GitHub webhook payload
+- `type.txt` — event name (e.g. `tests/events/commit_comment/type.txt`)
+- `expected_text.txt` — expected chat message text output from `GithubMessageBuilder`
 
 ## Code Style
 

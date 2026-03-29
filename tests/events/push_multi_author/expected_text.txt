@@ -1,0 +1,3 @@
+📦 John Quaglieri pushed 2 commits to [interserver/rspamd-rules](https://github.com/interserver/rspamd-rules) [`main`](https://github.com/interserver/rspamd-rules/tree/main) ([compare](https://github.com/interserver/rspamd-rules/compare/cab86f31d6cc...b7bdcf154c5d))
+• [42d7042](https://github.com/interserver/rspamd-rules/commit/42d7042e15407a9fb660567204ea480bb053dbff) _fp adjustment_ by Alice Contributor _(~1 files)_
+• [b7bdcf1](https://github.com/interserver/rspamd-rules/commit/b7bdcf154c5dcc50903ccc34a87cc8ab89cd3b8d) _adjustment for srs_ by John Quaglieri _(~1 files)_

@@ -2,5 +2,11 @@
     "require-dev": {
         "phpunit/phpunit": "^9.0",
         "phpstan/phpstan": "^0.12.53"
+    },
+    "scripts": {
+        "test": "vendor/bin/phpunit",
+        "analyse": "vendor/bin/phpstan analyse",
+        "cs-fix": "vendor/bin/php-cs-fixer fix",
+        "cs-check": "vendor/bin/php-cs-fixer fix --dry-run"
     }
 }

@@ -1,0 +1,1 @@
+ℹ️ github triggered a **dependabot_alert** event (created) on [detain/myadmin-client-vue](https://github.com/detain/myadmin-client-vue).

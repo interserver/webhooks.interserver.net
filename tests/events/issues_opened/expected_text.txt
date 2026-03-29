@@ -1,0 +1,11 @@
+🐛 [mend-bolt-for-github[bot]](https://github.com/mend-bolt-for-github[bot]) **opened** issue [#476 CVE-2025-58056 (High) detected in netty-codec-http-4.1.67.Final.jar, netty-codec-http-4.1.76.Final.jar](https://github.com/interserver/mailbaby-api-samples/issues/476) in [interserver/mailbaby-api-samples](https://github.com/interserver/mailbaby-api-samples). `Mend: dependency security vulnerability`
+
+> ## CVE-2025-58056 - High Severity Vulnerability
+<details><summary><img src='https://whitesource-resources.whitesourcesoftware.com/vulnerability_details.png' width=19 height=20> Vulnerable Libraries - <b>netty-codec-http-4.1.67.Final.jar</b>, <b>netty-codec-http-4.1.76.Final.jar</b></summary>
+<p>
+
+<details><summary><b>netty-codec-http-4.1.67.Final.jar</b></summary>
+
+<p></p>
+<p>Library home page: <a href="https://netty.io/">https://netty.io/</a></p>
+<p>Path to dependency file: /swagger-client/micr…

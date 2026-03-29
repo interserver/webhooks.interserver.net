@@ -1,0 +1,13 @@
+🔀 [detain](https://github.com/detain) **closed** pull request [#1 Configure WhiteSource Bolt for GitHub](https://github.com/myadmin-plugins/ips-vps-addon/pull/1) in [myadmin-plugins/ips-vps-addon](https://github.com/myadmin-plugins/ips-vps-addon) (`whitesource/configure` → `master`). ✅ Merged. _(1 commit, +12/-0, 1 file)_
+
+> Welcome to [WhiteSource Bolt for GitHub](https://github.com/marketplace/whitesource-bolt)! This is an onboarding PR to help you understand and configure settings before WhiteSource starts scanning your repository for security vulnerabilities.
+
+:vertical_traffic_light: WhiteSource Bolt for GitHub will start scanning your repository only once you merge this Pull Request. To disable WhiteSource Bolt for GitHub, simply close this Pull Request. 
+
+
+
+---
+
+### What to Expect
+
+This PR contains a '.whites…
