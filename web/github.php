@@ -153,6 +153,11 @@ try {
             $Commits = [];
 
             if (!empty($Message['commits'])) {
+                $PusherName = $Msg['alias'] ?? '';
+                $AllSameAuthor = array_reduce($Message['commits'], function (bool $carry, array $c) use ($PusherName): bool {
+                    return $carry && (($c['author']['name'] ?? '') === $PusherName);
+                }, true);
+
                 foreach ($Message['commits'] as $Commit) {
                     $CommitMsg = strtok($Commit['message'], "\n");
                     $FileCounts = [];
@@ -160,8 +165,8 @@ try {
                     if (!empty($Commit['modified'])) $FileCounts[] = '~' . count($Commit['modified']);
                     if (!empty($Commit['removed'])) $FileCounts[] = '-' . count($Commit['removed']);
                     $FileInfo = !empty($FileCounts) ? ' _(' . implode(' ', $FileCounts) . ' files)_' : '';
-                    $Commits[] = "• [" . substr($Commit['id'], 0, 7) . "]({$Commit['url']}) _{$CommitMsg}_ "
-                               . "by {$Commit['author']['name']}{$FileInfo}";
+                    $ByAuthor = $AllSameAuthor ? '' : " by {$Commit['author']['name']}";
+                    $Commits[] = "• [" . substr($Commit['id'], 0, 7) . "]({$Commit['url']}) _{$CommitMsg}_{$ByAuthor}{$FileInfo}";
                 }
             }
 
