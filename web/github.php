@@ -17,7 +17,7 @@ require __DIR__ . '/../src/GithubWebhook.php';
 require __DIR__ . '/../src/IgnoredEventException.php';
 require __DIR__ . '/../src/NotImplementedException.php';
 
-$Hook = new GitHubWebHook();
+$Hook = new GithubWebhook();
 try {
     if (!$Hook->ValidateHubSignature(GITHUB_WEBHOOKS_SECRET)) {
         throw new Exception('Secret validation failed.');
@@ -267,6 +267,35 @@ try {
             SendToChat('notifications', $Msg, $useRC, $useTeams);
             break;
 
+        case 'status':
+            $CiState = $Message['state'] ?? 'unknown';
+            $CiContext = $Message['context'] ?? 'CI';
+            $CiDescription = $Message['description'] ?? '';
+            $CiUrl = $Message['target_url'] ?? '';
+            $CommitUrl = $Message['commit']['html_url'] ?? '';
+            $CommitSha = substr($Message['sha'] ?? '', 0, 7);
+            $CommitMsg = $Message['commit']['commit']['message'] ?? '';
+            $CommitMsg = strtok($CommitMsg, "\n");
+            $StateEmoji = match ($CiState) {
+                'success' => '✅',
+                'failure' => '❌',
+                'error'   => '🚨',
+                'pending' => '⏳',
+                default   => 'ℹ️',
+            };
+            $CiLink = $CiUrl ? "[{$CiContext}]({$CiUrl})" : "**{$CiContext}**";
+            $CommitLink = $CommitUrl ? "[`{$CommitSha}`]({$CommitUrl})" : "`{$CommitSha}`";
+            $ChatMsg = "{$StateEmoji} **{$CiState}** — {$CiLink} on [{$RepositoryName}](https://github.com/{$RepositoryName}) {$CommitLink}";
+            if ($CiDescription !== '') {
+                $ChatMsg .= "\n> {$CiDescription}";
+            }
+            if ($CommitMsg !== '') {
+                $ChatMsg .= "\n> _{$CommitMsg}_";
+            }
+            $Msg['text'] = $ChatMsg;
+            SendToChat('notifications', $Msg, $useRC, $useTeams);
+            break;
+
         default:
             $ChatMsg = "ℹ️ {$Msg['alias']} triggered a **{$EventType}** event "
                      . (isset($Message['action']) ? "({$Message['action']}) " : "")
@@ -314,6 +343,7 @@ function SendToChat(string $Where, array $Payload, bool $useRC = true, bool $use
 {
     error_log("Sending Payload ".json_encode($Payload)." to {$Where}");
     global $chatChannels;
+    $Code = 0;
     if ($useRC === true) {
         $Url = $chatChannels['rocketchat'][$Where];
         $c = curl_init();

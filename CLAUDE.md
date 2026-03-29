@@ -19,7 +19,7 @@ vendor/bin/php-cs-fixer fix
 - **Config**: `src/config.php` (gitignored) — defines `GITHUB_WEBHOOKS_SECRET` and `$chatChannels['rocketchat']` / `$chatChannels['teams']`
 - **Logs**: `log/` — JSON files named `Ymd_His_eventtype_action_user_repo.json`
 - **Tests**: `tests/` via `phpunit.xml` · fixtures in `tests/events/{event_name}/`
-- **Quality**: `phpstan.neon` · `.php-cs-fixer.dist.php` (PSR2 + PHP74Migration)
+- **Quality**: `phpstan.neon` · `phpstan-bootstrap.php` · `.php-cs-fixer.dist.php` (PSR2 + PHP74Migration)
 - **CI**: `.github/` — GitHub Actions workflows (`.github/workflows/ci.yml`)
 
 ## Event Handling Pattern
@@ -36,7 +36,7 @@ file_put_contents(__DIR__.'/../log/'.date('Ymd_His').'_'.$EventType
     .(isset($Message['action']) ? '_'.$Message['action'] : '')
     .'_'.$User.'_'.str_replace(['/', '-', ' '], '_', $RepositoryName).'.json',
     json_encode($log, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-// 3. Route by event type
+// 3. Route by event type — $Builder->build() called before switch
 switch ($EventType) {
     case 'push': /* ... */ SendToChat('notifications', $Msg, $useRC, $useTeams); break;
     default: SendToChat('notifications', $Msg, $useRC, $useTeams); break;

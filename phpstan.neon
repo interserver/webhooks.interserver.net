@@ -1,12 +1,11 @@
 parameters:
 	checkMissingIterableValueType: false
 	level: 6
+	bootstrapFiles:
+		- phpstan-bootstrap.php
 	paths:
 		- .
 	excludes_analyse:
 		- vendor
 		- examples
 		- public
-	ignoreErrors:
-		- message: "/Access to an undefined property object::.*/"
-		  path: src/*.php

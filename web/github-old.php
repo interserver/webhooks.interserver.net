@@ -17,7 +17,7 @@ require __DIR__ . '/../src/GithubWebhook.php';
 require __DIR__ . '/../src/IgnoredEventException.php';
 require __DIR__ . '/../src/NotImplementedException.php';
 
-$Hook = new GitHubWebHook();
+$Hook = new GithubWebhook();
 try {
     if (!$Hook->ValidateHubSignature(GITHUB_WEBHOOKS_SECRET)) {
         throw new Exception('Secret validation failed.');
