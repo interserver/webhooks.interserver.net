@@ -62,7 +62,7 @@ try {
 
     $useRC = true;
     $useTeams = true;
-    if (explode('/', $RepositoryName)[0] == 'sugarcraft') || in_array($RepositoryName, ['detain/scoop-emulators', 'detain/detain', 'detain/sugarcraft'])) {
+    if (explode('/', $RepositoryName)[0] == 'sugarcraft' || in_array($RepositoryName, ['detain/scoop-emulators', 'detain/detain', 'detain/sugarcraft'])) {
         $useTeams = false;
     }
     switch ($EventType) {
