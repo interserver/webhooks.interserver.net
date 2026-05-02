@@ -62,6 +62,9 @@ try {
 
     $useRC = true;
     $useTeams = true;
+    if (in_array($RepositoryName, ['detain/scoop-emulators'])) {
+        $useTeams = false;
+    }
     switch ($EventType) {
         case 'issues':
 		if (in_array($RepositoryName, ['interserver/mailbaby-api-samples', 'detain/interserver-api-samples'])) {
