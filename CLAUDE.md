@@ -38,8 +38,8 @@ file_put_contents(__DIR__.'/../log/'.date('Ymd_His').'_'.$EventType
     json_encode($log, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
 // 3. Route by event type — $Builder->build() called before switch
 switch ($EventType) {
-    case 'push': /* ... */ SendToChat('notifications', $Msg, $useRC, $useTeams); break;
-    default: SendToChat('notifications', $Msg, $useRC, $useTeams); break;
+    case 'push': /* ... */ SendToChat($channelName, $Msg, $useRC, $useTeams); break;
+    default: SendToChat($channelName, $Msg, $useRC, $useTeams); break;
 }
 ```
 
@@ -49,6 +49,8 @@ switch ($EventType) {
 SendToChat(string $Where, array $Payload, bool $useRC = true, bool $useTeams = true): bool
 ```
 - `$Where` maps to `$chatChannels['rocketchat'][$Where]` and `$chatChannels['teams'][$Where]`
+- Pre-switch sets `$channelName = 'notifications'` (or `'int-dev-announce'` for `sugarcraft/*` and `detain/scoop-emulators` / `detain/detain` / `detain/sugarcraft`); pass it as `$Where`
+- Pre-switch defaults: `$useRC = false`, `$useTeams = true` — set `$useRC = true` per-case to enable Rocket Chat
 - Teams payload wraps `$Payload['text']` in `['type' => 'message', 'message' => ...]`
 - Always set `$useRC`/`$useTeams` flags per-case; some repos skip Teams (see `issues` case)
 
@@ -78,7 +80,6 @@ Each event type has a directory under `tests/events/{event_name}/` containing:
 - `JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES` on all `json_encode` calls in `web/github.php`
 - PHP CS Fixer enforces `@PSR2` + `@PHP74Migration`; run before committing
 
-<!-- caliber:managed:pre-commit -->
 ## Before Committing
 
 Run `caliber refresh` before creating git commits to keep docs in sync with code changes.
@@ -87,11 +88,24 @@ After it completes, stage any modified doc files before committing:
 ```bash
 caliber refresh && git add CLAUDE.md .claude/ .cursor/ .github/copilot-instructions.md AGENTS.md CALIBER_LEARNINGS.md 2>/dev/null
 ```
-<!-- /caliber:managed:pre-commit -->
-
-<!-- caliber:managed:learnings -->
 ## Session Learnings
 
 Read `CALIBER_LEARNINGS.md` for patterns and anti-patterns learned from previous sessions.
 These are auto-extracted from real tool usage — treat them as project-specific rules.
-<!-- /caliber:managed:learnings -->
+
+<!-- caliber:managed:model-config -->
+## Model Configuration
+
+Recommended default: `claude-sonnet-4-6` with high effort (stronger reasoning; higher cost and latency than smaller models).
+Smaller/faster models trade quality for speed and cost — pick what fits the task.
+Pin your choice (`/model` in Claude Code, or `CALIBER_MODEL` when using Caliber with an API provider) so upstream default changes do not silently change behavior.
+
+<!-- /caliber:managed:model-config -->
+
+<!-- caliber:managed:sync -->
+## Context Sync
+
+This project uses [Caliber](https://github.com/caliber-ai-org/ai-setup) to keep AI agent configs in sync across Claude Code, Cursor, Copilot, and Codex.
+Configs update automatically before each commit via `caliber refresh`.
+If the pre-commit hook is not set up, run `/setup-caliber` to configure everything automatically.
+<!-- /caliber:managed:sync -->

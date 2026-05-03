@@ -58,12 +58,15 @@ try {
     //http_response_code(200);
     //exit;
 
-
-
-    $useRC = true;
+    $useRC = false;
     $useTeams = true;
+    $channelName = 'notifications'
+/*   if (in_array($EventType, ['star', 'watch'])) {
+    $useTeams = false;
+   }*/
     if (explode('/', $RepositoryName)[0] == 'sugarcraft' || in_array($RepositoryName, ['detain/scoop-emulators', 'detain/detain', 'detain/sugarcraft'])) {
-        $useTeams = false;
+        $channelName = 'int-dev-announce';
+        //$useTeams = false;
     }
     switch ($EventType) {
         case 'issues':
@@ -98,7 +101,7 @@ try {
             }
 
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg, $useRC, $useTeams);
+            SendToChat($channelName, $Msg, $useRC, $useTeams);
             break;
 
         case 'pull_request':
@@ -147,7 +150,7 @@ try {
             }
 
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg, $useRC, $useTeams);
+            SendToChat($channelName, $Msg, $useRC, $useTeams);
             break;
 
         case 'push':
@@ -187,7 +190,7 @@ try {
             }
 
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg, $useRC, $useTeams);
+            SendToChat($channelName, $Msg, $useRC, $useTeams);
             break;
 
         case 'check_suite':
@@ -211,7 +214,7 @@ try {
             }
 
             $Msg['text'] = $ChatMsg;
-            //SendToChat('notifications', $Msg, $useRC, $useTeams);
+            //SendToChat($channelName, $Msg, $useRC, $useTeams);
             break;
 
         case 'workflow_run':
@@ -244,7 +247,7 @@ try {
             }
 
             $Msg['text'] = $ChatMsg;
-            //SendToChat('notifications', $Msg, $useRC, $useTeams);
+            //SendToChat($channelName, $Msg, $useRC, $useTeams);
             break;
 	case 'gollum':
             $Pages = $Message['pages'] ?? [];
@@ -267,7 +270,7 @@ try {
                          . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
             }
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg, $useRC, $useTeams);
+            SendToChat($channelName, $Msg, $useRC, $useTeams);
             break;
 
         case 'status':
@@ -296,7 +299,7 @@ try {
                 $ChatMsg .= "\n> _{$CommitMsg}_";
             }
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg, $useRC, $useTeams);
+            SendToChat($channelName, $Msg, $useRC, $useTeams);
             break;
 
         default:
@@ -305,7 +308,7 @@ try {
                      . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
 
             $Msg['text'] = $ChatMsg;
-            SendToChat('notifications', $Msg, $useRC, $useTeams);
+            SendToChat($channelName, $Msg, $useRC, $useTeams);
             break;
     }
     /*
