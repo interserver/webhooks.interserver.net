@@ -60,11 +60,12 @@ try {
 
     $useRC = false;
     $useTeams = true;
-    $channelName = 'notifications'
+//    $useTeams = false;
+    $channelName = 'notifications';
 /*   if (in_array($EventType, ['star', 'watch'])) {
     $useTeams = false;
    }*/
-    if (explode('/', $RepositoryName)[0] == 'sugarcraft' || in_array($RepositoryName, ['detain/scoop-emulators', 'detain/detain', 'detain/sugarcraft'])) {
+    if (explode('/', $RepositoryName)[0] == 'sugarcraft' || in_array($RepositoryName, ['detain/CandyCore', 'detain/scoop-emulators', 'detain/detain', 'detain/sugarcraft', 'detain/watchable', 'detain/php-dup-finder'])) {
         $channelName = 'int-dev-announce';
         //$useTeams = false;
     }
