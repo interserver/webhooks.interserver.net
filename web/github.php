@@ -2,20 +2,22 @@
 declare(strict_types=1);
 
 /**
-* @link https://docs.github.com/en/developers/webhooks-and-events/webhooks/webhook-events-and-payloads
-* @link https://github.com/github/docs/blob/main/content/developers/webhooks-and-events/webhooks/webhook-events-and-payloads.md
-* @link https://github.com/organizations/interserver/settings/hooks/359889086?tab=deliveries
-*
-*/
+ * @link https://docs.github.com/en/developers/webhooks-and-events/webhooks/webhook-events-and-payloads
+ * @link https://github.com/github/docs/blob/main/content/developers/webhooks-and-events/webhooks/webhook-events-and-payloads.md
+ * @link https://github.com/organizations/interserver/settings/hooks/359889086?tab=deliveries
+ */
 
 header('Content-Type: text/plain; charset=utf-8');
-// set default response code
 http_response_code(500);
 
-require __DIR__ . '/../src/config.php';
-require __DIR__ . '/../src/GithubWebhook.php';
-require __DIR__ . '/../src/IgnoredEventException.php';
-require __DIR__ . '/../src/NotImplementedException.php';
+require_once __DIR__ . '/../src/config.php';
+require_once __DIR__ . '/../src/GithubWebhook.php';
+require_once __DIR__ . '/../src/GithubMessageBuilder.php';
+require_once __DIR__ . '/../src/IgnoredEventException.php';
+require_once __DIR__ . '/../src/NotImplementedException.php';
+require_once __DIR__ . '/../src/NotificationQueue.php';
+
+const GITHUB_LOG_DIR = __DIR__ . '/../log';
 
 $Hook = new GithubWebhook();
 try {
@@ -23,379 +25,146 @@ try {
         throw new Exception('Secret validation failed.');
     }
     $Hook->ProcessRequest();
+
     $RepositoryName = $Hook->GetFullRepositoryName();
     $EventType = $Hook->GetEventType();
-    // format message
-    //$Converter = new Converter($Hook->GetEventType(), $Hook->GetPayload());
-    //$Message = $Converter->GetEmbed();
-    $Message = $Hook->GetPayload();
-    $log = ['repo' => $RepositoryName, 'event' => $EventType, 'data' => $Message];
-    $Msg = [];
-    if (isset($Message[$EventType]['app']['name'])) {
-        $User = $Message[$EventType]['app']['name'];
-    } else {
-        $User = $Message['sender']['login'];
-    }
-    if (isset($Message[$EventType]['app']['owner']['avatar_url'])) {
-        $Msg['avatar'] = $Message[$EventType]['app']['owner']['avatar_url'];
-    } elseif (isset($Message['avatar_url'])) {
-        $Msg['avatar'] = $Message['avatar_url'];
-    } else {
-        $Msg['avatar'] = $Message['sender']['avatar_url'];
-    }
-    if (isset($Message['head_commit'])) {
-        $Msg['alias'] = $Message['head_commit']['author']['name'];
-    } elseif (isset($Message['commits']) && isset($Message['commits'][0]['author']['name'])) {
-        $Msg['alias'] = $Message['commits'][0]['author']['name'];
-    } elseif (isset($Message['commit']) && isset($Message['commit']['commit']['author']['name'])) {
-        $Msg['alias'] = $Message['commit']['commit']['author']['name'];
-    }
-    file_put_contents(__DIR__.'/../log/'.date('Ymd_His').'_'.$EventType.(isset($Message['action']) ? '_'.$Message['action'] : '').'_'.$User.'_'.str_replace(['/', '-', ' '], ['_', '_', '_'], $RepositoryName).'.json', json_encode($log, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE |  JSON_UNESCAPED_SLASHES));
-    if (empty($Message)) {
-        throw new Exception('Empty message, not sending.');
+    $Payload = $Hook->GetPayload();
+
+    if (empty($Payload)) {
+        throw new Exception('Empty payload, not sending.');
     }
 
-    //http_response_code(200);
-    //exit;
-
-    $useRC = false;
-    $useTeams = true;
-//    $useTeams = false;
-    $channelName = 'notifications';
-/*   if (in_array($EventType, ['star', 'watch'])) {
-    $useTeams = false;
-   }*/
-    if (explode('/', $RepositoryName)[0] == 'sugarcraft' || in_array($RepositoryName, ['detain/CandyCore', 'detain/scoop-emulators', 'detain/detain', 'detain/sugarcraft', 'detain/watchable', 'detain/php-dup-finder'])) {
-        $channelName = 'int-dev-announce';
-        //$useTeams = false;
+    $action = $Payload['action'] ?? null;
+    $room = pickRoom($RepositoryName);
+    $dedupKey = buildDedupKey($EventType, $RepositoryName, $Payload);
+    $logLevel = strtolower((string)(getenv('LOG_LEVEL') ?: 'info'));
+    if ($logLevel === 'debug') {
+        github_log_event($EventType, $RepositoryName, $action, $Payload['sender']['login'] ?? 'unknown', ['payload_size' => strlen(json_encode($Payload))]);
     }
-    switch ($EventType) {
-        case 'issues':
-		if (in_array($RepositoryName, ['interserver/mailbaby-api-samples', 'detain/interserver-api-samples'])) {
-			$useTeams = false;
-			break;
-		}
-            $Issue = $Message['issue'];
-            $IssueUrl = $Issue['html_url'];
-            $IssueTitle = $Issue['title'];
-            $Action = $Message['action'];
 
-            $ChatMsg = "🐛 [{$User}](https://github.com/{$User}) **{$Action}** issue [#{$Issue['number']} {$IssueTitle}]({$IssueUrl}) "
-                     . "in [{$RepositoryName}](https://github.com/{$RepositoryName}).";
-
-            if (!empty($Issue['labels'])) {
-                $Labels = array_map(fn($l) => "`{$l['name']}`", $Issue['labels']);
-                $ChatMsg .= " " . implode(' ', $Labels);
-            }
-
-            if ($Action === 'closed' && !empty($Issue['state_reason'])) {
-                $ChatMsg .= " _(reason: {$Issue['state_reason']})_";
-            }
-
-            if ($Action === 'edited' && !empty($Message['changes'])) {
-                $Changed = array_keys($Message['changes']);
-                $ChatMsg .= " _(changed: " . implode(', ', $Changed) . ")_";
-            }
-
-            if (!empty($Issue['body'])) {
-                $ChatMsg .= "\n\n> " . substr($Issue['body'], 0, 500) . (strlen($Issue['body']) > 500 ? "…" : "");
-            }
-
-            $Msg['text'] = $ChatMsg;
-            SendToChat($channelName, $Msg, $useRC, $useTeams);
-            break;
-
-        case 'pull_request':
-            $PR = $Message['pull_request'];
-            $Action = $Message['action'];
-            $PRUrl = $PR['html_url'];
-            $PRTitle = $PR['title'];
-            $HeadBranch = $PR['head']['ref'] ?? '';
-            $BaseBranch = $PR['base']['ref'] ?? '';
-
-            $ChatMsg = "🔀 [{$User}](https://github.com/{$User}) **{$Action}** pull request "
-                     . "[#{$PR['number']} {$PRTitle}]({$PRUrl}) "
-                     . "in [{$RepositoryName}](https://github.com/{$RepositoryName})";
-
-            if ($HeadBranch && $BaseBranch) {
-                $ChatMsg .= " (`{$HeadBranch}` → `{$BaseBranch}`)";
-            }
-            $ChatMsg .= ".";
-
-            if (!empty($PR['draft'])) {
-                $ChatMsg .= " _(draft)_";
-            }
-
-            if ($Action === 'closed' && !empty($PR['merged'])) {
-                $ChatMsg .= " ✅ Merged.";
-            }
-
-            if (in_array($Action, ['opened', 'reopened', 'closed']) && isset($PR['commits'])) {
-                $Stats = [];
-                if (!empty($PR['commits'])) {
-                    $Stats[] = "{$PR['commits']} commit" . ($PR['commits'] !== 1 ? "s" : "");
-                }
-                if (isset($PR['additions'], $PR['deletions'])) {
-                    $Stats[] = "+{$PR['additions']}/-{$PR['deletions']}";
-                }
-                if (!empty($PR['changed_files'])) {
-                    $Stats[] = "{$PR['changed_files']} file" . ($PR['changed_files'] !== 1 ? "s" : "");
-                }
-                if (!empty($Stats)) {
-                    $ChatMsg .= " _(" . implode(', ', $Stats) . ")_";
-                }
-            }
-
-            if (!empty($PR['body'])) {
-                $ChatMsg .= "\n\n> " . substr($PR['body'], 0, 500) . (strlen($PR['body']) > 500 ? "…" : "");
-            }
-
-            $Msg['text'] = $ChatMsg;
-            SendToChat($channelName, $Msg, $useRC, $useTeams);
-            break;
-
-        case 'push':
-            $Branch = isset($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '';
-            $CommitCount = isset($Message['commits']) ? count($Message['commits']) : 1;
-            $Commits = [];
-
-            if (!empty($Message['commits'])) {
-                $PusherName = $Msg['alias'] ?? '';
-                $AllSameAuthor = array_reduce($Message['commits'], function (bool $carry, array $c) use ($PusherName): bool {
-                    return $carry && (($c['author']['name'] ?? '') === $PusherName);
-                }, true);
-
-                foreach ($Message['commits'] as $Commit) {
-                    $CommitMsg = strtok($Commit['message'], "\n");
-                    $FileCounts = [];
-                    if (!empty($Commit['added'])) $FileCounts[] = '+' . count($Commit['added']);
-                    if (!empty($Commit['modified'])) $FileCounts[] = '~' . count($Commit['modified']);
-                    if (!empty($Commit['removed'])) $FileCounts[] = '-' . count($Commit['removed']);
-                    $FileInfo = !empty($FileCounts) ? ' _(' . implode(' ', $FileCounts) . ' files)_' : '';
-                    $ByAuthor = $AllSameAuthor ? '' : " by {$Commit['author']['name']}";
-                    $Commits[] = "• [" . substr($Commit['id'], 0, 7) . "]({$Commit['url']}) _{$CommitMsg}_{$ByAuthor}{$FileInfo}";
-                }
-            }
-
-            $ChatMsg = "📦 {$Msg['alias']} pushed {$CommitCount} "
-                     . ($CommitCount === 1 ? "commit" : "commits")
-                     . " to [{$RepositoryName}](https://github.com/{$RepositoryName}) "
-                     . "[`{$Branch}`](https://github.com/{$RepositoryName}/tree/{$Branch})";
-
-            if (!empty($Message['compare'])) {
-                $ChatMsg .= " ([compare]({$Message['compare']}))";
-            }
-
-            if (!empty($Commits)) {
-                $ChatMsg .= "\n" . implode("\n", $Commits);
-            }
-
-            $Msg['text'] = $ChatMsg;
-            SendToChat($channelName, $Msg, $useRC, $useTeams);
-            break;
-
-        case 'check_suite':
-        case 'check_run':
-            $Status = $Message['check_suite']['conclusion'] ?? $Message['check_run']['conclusion'] ?? 'in_progress';
-            $Name = $Message['check_suite']['app']['name'] ?? $Message['check_run']['name'];
-            $Url = $Message['check_suite']['url'] ?? $Message['check_run']['html_url'];
-            $Branch = $Message['check_suite']['head_branch'] ?? $Message['check_run']['check_suite']['head_branch'] ?? '';
-            $CommitMsg = $Message['check_suite']['head_commit']['message'] ?? $Message['check_run']['check_suite']['head_commit']['message'] ?? '';
-
-            $Emoji = $Status === 'success' ? "✅" : ($Status === 'failure' ? "❌" : "⏳");
-            $ChatMsg = "{$Emoji} Check **{$Name}** {$Status} "
-                     . "for [{$RepositoryName}](https://github.com/{$RepositoryName})";
-            if ($Branch) {
-                $ChatMsg .= " on `{$Branch}`";
-            }
-            $ChatMsg .= " ([details]({$Url}))";
-            if ($CommitMsg) {
-                $CommitMsg = strtok($CommitMsg, "\n");
-                $ChatMsg .= "\n> _{$CommitMsg}_";
-            }
-
-            $Msg['text'] = $ChatMsg;
-            //SendToChat($channelName, $Msg, $useRC, $useTeams);
-            break;
-
-        case 'workflow_run':
-        case 'workflow_job':
-            $WorkflowName = $Message['workflow_run']['name'] ?? $Message['workflow']['name'] ?? $Message['workflow_job']['workflow_name'] ?? $Message['workflow_job']['name'] ?? "Workflow";
-            $Status = $Message['workflow_run']['conclusion'] ?? $Message['workflow_job']['conclusion'] ?? $Message['workflow_run']['status'] ?? $Message['workflow_job']['status'] ?? "in_progress";
-            $Url = $Message['workflow_run']['html_url'] ?? $Message['workflow_job']['html_url'] ?? "#";
-            $Branch = $Message['workflow_run']['head_branch'] ?? $Message['workflow_job']['head_branch'] ?? '';
-            $Emoji = $Status === 'success' ? "✅" : ($Status === 'failure' ? "❌" : ($Status === 'in_progress' ? "⏳" : "🔄"));
-
-            $ChatMsg = "{$Emoji} Workflow **{$WorkflowName}** {$Status} "
-                     . "for [{$RepositoryName}](https://github.com/{$RepositoryName})";
-            if ($Branch) {
-                $ChatMsg .= " on `{$Branch}`";
-            }
-            $ChatMsg .= " ([view run]({$Url}))";
-
-            if ($EventType === 'workflow_run' && !empty($Message['workflow_run']['head_commit']['message'])) {
-                $HeadCommitMsg = strtok($Message['workflow_run']['head_commit']['message'], "\n");
-                $ChatMsg .= "\n> _{$HeadCommitMsg}_";
-            }
-
-            if ($EventType === 'workflow_job' && !empty($Message['workflow_job']['steps'])) {
-                foreach ($Message['workflow_job']['steps'] as $Step) {
-                    if ($Step['status'] === 'in_progress') {
-                        $ChatMsg .= "\n> Step: _{$Step['name']}_";
-                        break;
-                    }
-                }
-            }
-
-            $Msg['text'] = $ChatMsg;
-            //SendToChat($channelName, $Msg, $useRC, $useTeams);
-            break;
-	case 'gollum':
-            $Pages = $Message['pages'] ?? [];
-            if (!empty($Pages)) {
-                $PageLines = [];
-                foreach ($Pages as $Page) {
-                    $PageAction = $Page['action'] ?? 'updated';
-                    $PageTitle = $Page['title'] ?? 'Unknown';
-                    $PageUrl = $Page['html_url'] ?? '';
-                    $Summary = !empty($Page['summary']) ? " — {$Page['summary']}" : '';
-                    $PageLines[] = "• **{$PageAction}** [{$PageTitle}]({$PageUrl}){$Summary}";
-                }
-                $PageCount = count($Pages);
-                $ChatMsg = "📝 [{$User}](https://github.com/{$User}) updated {$PageCount} wiki "
-                         . ($PageCount === 1 ? "page" : "pages")
-                         . " on [{$RepositoryName}](https://github.com/{$RepositoryName}):\n"
-                         . implode("\n", $PageLines);
-            } else {
-                $ChatMsg = "📝 [{$User}](https://github.com/{$User}) updated the wiki "
-                         . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
-            }
-            $Msg['text'] = $ChatMsg;
-            SendToChat($channelName, $Msg, $useRC, $useTeams);
-            break;
-
-        case 'status':
-            $CiState = $Message['state'] ?? 'unknown';
-            $CiContext = $Message['context'] ?? 'CI';
-            $CiDescription = $Message['description'] ?? '';
-            $CiUrl = $Message['target_url'] ?? '';
-            $CommitUrl = $Message['commit']['html_url'] ?? '';
-            $CommitSha = substr($Message['sha'] ?? '', 0, 7);
-            $CommitMsg = $Message['commit']['commit']['message'] ?? '';
-            $CommitMsg = strtok($CommitMsg, "\n");
-            $StateEmoji = match ($CiState) {
-                'success' => '✅',
-                'failure' => '❌',
-                'error'   => '🚨',
-                'pending' => '⏳',
-                default   => 'ℹ️',
-            };
-            $CiLink = $CiUrl ? "[{$CiContext}]({$CiUrl})" : "**{$CiContext}**";
-            $CommitLink = $CommitUrl ? "[`{$CommitSha}`]({$CommitUrl})" : "`{$CommitSha}`";
-            $ChatMsg = "{$StateEmoji} **{$CiState}** — {$CiLink} on [{$RepositoryName}](https://github.com/{$RepositoryName}) {$CommitLink}";
-            if ($CiDescription !== '') {
-                $ChatMsg .= "\n> {$CiDescription}";
-            }
-            if ($CommitMsg !== '') {
-                $ChatMsg .= "\n> _{$CommitMsg}_";
-            }
-            $Msg['text'] = $ChatMsg;
-            SendToChat($channelName, $Msg, $useRC, $useTeams);
-            break;
-
-        default:
-            $ChatMsg = "ℹ️ {$Msg['alias']} triggered a **{$EventType}** event "
-                     . (isset($Message['action']) ? "({$Message['action']}) " : "")
-                     . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
-
-            $Msg['text'] = $ChatMsg;
-            SendToChat($channelName, $Msg, $useRC, $useTeams);
-            break;
-    }
-    /*
-    foreach($githubWebhooks as $Event => $Repos) {
-        if (!WildMatch($EventType, $Event))
-        foreach ($Repos as $Repo => $SendTargets) {
-            if (!WildMatch($RepositoryName, $Repo))
-                continue;
-            foreach($SendTargets as $ChannelName) {
-                SendToChat($ChannelName, $Message);
-            }
+    // The bot decides whether each event is interesting enough to actually
+    // post to Teams (see server/queue/filters.js). We just queue everything
+    // here so the bot has both the prebuilt text AND the raw payload for
+    // downstream reformatting.
+    //
+    // Producer-side rate-limiting is off by default so the "queue it all"
+    // intent holds. Set RATE_LIMIT_WINDOW=<seconds> in the webhook .env to
+    // re-enable per-dedup-key suppression at the producer (rare bursts only).
+    $rateWindow = (int)(getenv('RATE_LIMIT_WINDOW') ?: 0);
+    if ($rateWindow > 0 && $dedupKey !== '') {
+        if (!NotificationQueue::shouldSendOrSuppress($dedupKey, $rateWindow)) {
+            http_response_code(200);
+            error_log("github: rate-limited {$dedupKey} (not queued)");
+            return;
         }
     }
-    */
-    //error_log('GitHub Hook '.$EventType.' on '.$RepositoryName.' called');
+
+    $Builder = new GithubMessageBuilder($EventType, $Payload);
+    try {
+        $Built = $Builder->build();
+        $text = $Built['text'] ?? '';
+    } catch (\Throwable $e) {
+        // Builder may not handle every event; carry an empty text and let
+        // the bot decide what to do with the raw data.
+        $text = '';
+    }
+
+    NotificationQueue::enqueueMessage($text, $room, [
+        'dedup_key' => $dedupKey,
+        'level' => 'info',
+        'event_type' => $EventType,
+        'action' => $action,
+        'repo' => $RepositoryName,
+        'data' => $Payload,
+        'source' => 'webhooks/github.php',
+    ]);
+    $disposition = NotificationQueue::getLastStatus();
+    $previewText = $text !== '' ? mb_substr(preg_replace('/\s+/u', ' ', $text), 0, 100) : '<no-text>';
+    error_log(sprintf(
+        'github: disp=%s %s(%s) repo=%s room=%s dedup=%s text="%s"',
+        $disposition,
+        $EventType,
+        $action ?? '-',
+        $RepositoryName,
+        $room,
+        $dedupKey,
+        $previewText
+    ));
+
     http_response_code(202);
 } catch (IgnoredEventException $e) {
     http_response_code(200);
-    error_log('This GitHub event is ignored.');
+    error_log('github: ignored event: ' . $e->getMessage());
 } catch (NotImplementedException $e) {
     http_response_code(501);
-    error_log('Unsupported GitHub event: ' . $e->EventName);
-} catch (Exception $e) {
-    error_log('Exception: ' . $e->getMessage() . PHP_EOL);
+    error_log('github: unsupported event: ' . $e->EventName);
+} catch (Throwable $e) {
+    error_log('github exception: ' . $e->getMessage());
 }
 
-function WildMatch(string $string, string $expression) : bool
+function pickRoom(string $repo): string
 {
-    if (strpos($expression, '*') === false) {
-        return strcmp($expression, $string) === 0;
+    if (strpos($repo, 'sugarcraft/') === 0
+        || in_array($repo, ['detain/CandyCore', 'detain/scoop-emulators', 'detain/detain', 'detain/sugarcraft', 'detain/watchable', 'detain/php-dup-finder'], true)) {
+        return 'int-dev-announce';
     }
-    $expression = preg_quote($expression, '/');
-    $expression = str_replace('\*', '.*', $expression);
-    return preg_match('/^' . $expression . '$/', $string) === 1;
+    return 'notifications';
 }
 
-function SendToChat(string $Where, array $Payload, bool $useRC = true, bool $useTeams = true) : bool
+function buildDedupKey(string $eventType, string $repo, array $payload): string
 {
-    error_log("Sending Payload ".json_encode($Payload)." to {$Where}");
-    global $chatChannels;
-    $Code = 0;
-    if ($useRC === true) {
-        $Url = $chatChannels['rocketchat'][$Where];
-        $c = curl_init();
-        curl_setopt_array($c, [
-        CURLOPT_USERAGENT      => 'https://github.com/xPaw/GitHub-WebHook',
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => 1,
-        CURLOPT_TIMEOUT        => 30,
-        CURLOPT_CONNECTTIMEOUT => 30,
-        CURLOPT_URL            => $Url,
-        CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => json_encode($Payload, JSON_UNESCAPED_UNICODE |  JSON_UNESCAPED_SLASHES),
-        CURLOPT_HTTPHEADER     => [
-            'Content-Type: application/json',
-        ],
-        ]);
-        $out = curl_exec($c);
-	error_log("{$Url} Out: {$out}");
-        $Code = curl_getinfo($c, CURLINFO_HTTP_CODE);
-        curl_close($c);
-        error_log('Rocket Chat HTTP ' . $Code . PHP_EOL);
+    switch ($eventType) {
+        case 'check_run':
+            $sha = (string)($payload['check_run']['head_sha'] ?? '');
+            return "github:checkrun:{$repo}:" . substr($sha, 0, 7);
+        case 'check_suite':
+            $sha = (string)($payload['check_suite']['head_sha'] ?? '');
+            return "github:check:{$repo}:" . substr($sha, 0, 7);
+        case 'workflow_run':
+            $branch = (string)($payload['workflow_run']['head_branch'] ?? '');
+            $name = (string)($payload['workflow_run']['name'] ?? 'workflow');
+            return "github:wf:{$repo}:{$branch}:{$name}";
+        case 'workflow_job':
+            $branch = (string)($payload['workflow_job']['head_branch'] ?? '');
+            $jobName = (string)($payload['workflow_job']['name'] ?? 'job');
+            return "github:wfjob:{$repo}:{$branch}:{$jobName}";
+        case 'issues':
+            $num = (int)($payload['issue']['number'] ?? 0);
+            return "github:issue:{$repo}:{$num}";
+        case 'pull_request':
+            $num = (int)($payload['pull_request']['number'] ?? 0);
+            return "github:pr:{$repo}:{$num}";
+        case 'push':
+            $branch = isset($payload['ref']) ? str_replace('refs/heads/', '', (string)$payload['ref']) : 'unknown';
+            return "github:push:{$repo}:{$branch}";
+        case 'gollum':
+            return "github:wiki:{$repo}";
+        case 'status':
+            $sha = (string)($payload['sha'] ?? '');
+            return "github:status:{$repo}:" . substr($sha, 0, 7);
+        case 'star':
+        case 'watch':
+        case 'fork':
+            return "github:{$eventType}:{$repo}";
+        case 'ping':
+            return "github:ping:{$repo}";
     }
-    if ($useTeams === true) {
-        $c = curl_init();
-        $Url = $chatChannels['teams'][$Where];
-        curl_setopt_array($c, [
-        CURLOPT_USERAGENT      => 'https://github.com/xPaw/GitHub-WebHook',
-        CURLOPT_RETURNTRANSFER => true,
-        CURLOPT_FOLLOWLOCATION => 1,
-        CURLOPT_TIMEOUT        => 30,
-        CURLOPT_CONNECTTIMEOUT => 30,
-        CURLOPT_URL            => $Url,
-        CURLOPT_POST           => true,
-        CURLOPT_POSTFIELDS     => json_encode([
-            'type' => 'message',
-            'message' => $Payload['text']
-        ], JSON_UNESCAPED_UNICODE |  JSON_UNESCAPED_SLASHES),
-        CURLOPT_HTTPHEADER     => [
-            'Content-Type: application/json',
-        ],
-        ]);
-       curl_exec($c);
-        $Code = curl_getinfo($c, CURLINFO_HTTP_CODE);
-        curl_close($c);
-    }
+    return "github:{$eventType}:{$repo}";
+}
 
-    return $Code >= 200 && $Code < 300;
+function github_log_event(string $eventType, string $repo, ?string $action, string $sender, array $extra = []): void
+{
+    $dir = GITHUB_LOG_DIR . '/' . date('Y/m/d');
+    if (!is_dir($dir)) {
+        @mkdir($dir, 0755, true);
+    }
+    $name = sprintf(
+        '%s_%s%s_%s_%s.json',
+        date('His'),
+        $eventType,
+        $action !== null ? '_' . $action : '',
+        $sender,
+        str_replace(['/', '-', ' '], ['_', '_', '_'], $repo)
+    );
+    @file_put_contents($dir . '/' . $name, json_encode($extra, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
 }

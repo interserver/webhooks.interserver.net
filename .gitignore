@@ -1,3 +1,4 @@
+.env
 vendor/
 src/config.php
 composer.lock
