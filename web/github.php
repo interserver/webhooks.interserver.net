@@ -19,6 +19,59 @@ require_once __DIR__ . '/../src/NotificationQueue.php';
 
 const GITHUB_LOG_DIR = __DIR__ . '/../log';
 
+// Load field categories for payload filtering
+$fieldCategoriesFile = __DIR__ . '/../field_analysis_full/field_categories.php';
+$fieldCategories = file_exists($fieldCategoriesFile) ? require $fieldCategoriesFile : null;
+
+/**
+ * Build whitelist from field categories
+ */
+function buildWebhookWhitelist(array $categories): array
+{
+    $whitelist = [];
+
+    foreach ($categories['universal']['useful'] ?? [] as $field) {
+        $whitelist[$field] = true;
+    }
+
+    foreach ($categories['correlation_ids'] ?? [] as $field) {
+        $whitelist[$field] = true;
+    }
+
+    foreach ($categories['per_event'] ?? [] as $event => $fields) {
+        foreach ($fields as $field) {
+            $whitelist[$field] = true;
+        }
+    }
+
+    foreach ($categories['grouping_strategy'] ?? [] as $field) {
+        $whitelist[$field] = true;
+    }
+
+    return $whitelist;
+}
+
+/**
+ * Add universal repository fields to whitelist for a specific event
+ */
+function addUniversalRepoFields(array $whitelist): array
+{
+    $universal = [
+        'repo', 'event', 'data',
+        'data.repository.full_name',
+        'data.sender.login',
+        'data.sender.html_url',
+        'data.sender.avatar_url',
+        'data.action',
+    ];
+
+    foreach ($universal as $field) {
+        $whitelist[$field] = true;
+    }
+
+    return $whitelist;
+}
+
 $Hook = new GithubWebhook();
 try {
     if (!$Hook->ValidateHubSignature(GITHUB_WEBHOOKS_SECRET)) {
@@ -32,6 +85,17 @@ try {
 
     if (empty($Payload)) {
         throw new Exception('Empty payload, not sending.');
+    }
+
+    // Filter payload immediately - remove all fields not useful for notifications
+    if ($fieldCategories !== null) {
+        $whitelist = buildWebhookWhitelist($fieldCategories);
+        $whitelist = addUniversalRepoFields($whitelist);
+        $eventFields = $fieldCategories['per_event'][$EventType] ?? [];
+        foreach ($eventFields as $field) {
+            $whitelist[$field] = true;
+        }
+        $Payload = filterWebhookPayload($Payload, $whitelist, $EventType);
     }
 
     $action = $Payload['action'] ?? null;
@@ -167,4 +231,222 @@ function github_log_event(string $eventType, string $repo, ?string $action, stri
         str_replace(['/', '-', ' '], ['_', '_', '_'], $repo)
     );
     @file_put_contents($dir . '/' . $name, json_encode($extra, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE));
+}
+
+/**
+ * Recursively filter webhook payload by whitelist
+ */
+function filterWebhookPayload(array $data, array $whitelist, string $event): array
+{
+    $result = [];
+
+    foreach ($data as $key => $value) {
+        $currentPath = 'data.' . $key;
+        $arrayPath = $currentPath . '[]';
+
+        // Check if this path is whitelisted
+        $isWhitelisted = isset($whitelist[$currentPath]) || isset($whitelist[$arrayPath]);
+
+        // Also check if any child path is whitelisted
+        if (!$isWhitelisted) {
+            foreach ($whitelist as $wlPath => $_) {
+                if (strpos($wlPath, $currentPath . '.') === 0 || strpos($wlPath, $currentPath . '[]') === 0) {
+                    $isWhitelisted = true;
+                    break;
+                }
+            }
+        }
+
+        if ($isWhitelisted) {
+            if (is_array($value)) {
+                if (isSequentialArray($value)) {
+                    $filtered = [];
+                    foreach ($value as $idx => $element) {
+                        if (is_array($element)) {
+                            $subWl = [];
+                            foreach ($whitelist as $wlPath => $_) {
+                                if (strpos($wlPath, $arrayPath) === 0) {
+                                    $subWl[substr($wlPath, strlen($arrayPath) + 1)] = true;
+                                }
+                            }
+                            if (!empty($subWl)) {
+                                $extracted = extractSubset($element, $subWl);
+                                if (!empty($extracted)) {
+                                    $filtered[$idx] = $extracted;
+                                }
+                            } else {
+                                $filtered[$idx] = $element;
+                            }
+                        } else {
+                            $filtered[$idx] = $element;
+                        }
+                    }
+                    if (!empty($filtered)) {
+                        $result[$key] = $filtered;
+                    }
+                } else {
+                    $childWl = [];
+                    foreach ($whitelist as $wlPath => $_) {
+                        if (strpos($wlPath, $currentPath . '.') === 0) {
+                            $childWl[substr($wlPath, strlen($currentPath) + 1)] = true;
+                        }
+                    }
+                    $childResult = filterRecursive($value, $childWl);
+                    if (!empty($childResult)) {
+                        $result[$key] = $childResult;
+                    }
+                }
+            } else {
+                $result[$key] = $value;
+            }
+        } elseif (is_array($value) && !isSequentialArray($value)) {
+            $childWl = [];
+            foreach ($whitelist as $wlPath => $_) {
+                if (strpos($wlPath, $currentPath . '.') === 0) {
+                    $childWl[substr($wlPath, strlen($currentPath) + 1)] = true;
+                }
+            }
+            if (!empty($childWl)) {
+                $childResult = filterRecursive($value, $childWl);
+                if (!empty($childResult)) {
+                    $result[$key] = $childResult;
+                }
+            }
+        }
+    }
+
+    return $result;
+}
+
+/**
+ * Recursively filter array with stripped whitelist (prefix already removed)
+ */
+function filterRecursive(array $data, array $whitelist): array
+{
+    $result = [];
+
+    foreach ($data as $key => $value) {
+        $currentPath = $key;
+        $arrayPath = $key . '[]';
+
+        $isWhitelisted = isset($whitelist[$currentPath]) || isset($whitelist[$arrayPath]);
+
+        if (!$isWhitelisted) {
+            foreach ($whitelist as $wlPath => $_) {
+                if (strpos($wlPath, $currentPath . '.') === 0 || strpos($wlPath, $currentPath . '[]') === 0) {
+                    $isWhitelisted = true;
+                    break;
+                }
+            }
+        }
+
+        if ($isWhitelisted) {
+            if (is_array($value)) {
+                if (isSequentialArray($value)) {
+                    $filtered = [];
+                    foreach ($value as $idx => $element) {
+                        if (is_array($element)) {
+                            $subWl = [];
+                            foreach ($whitelist as $wlPath => $_) {
+                                if (strpos($wlPath, $arrayPath) === 0) {
+                                    $subWl[substr($wlPath, strlen($arrayPath) + 1)] = true;
+                                }
+                            }
+                            if (!empty($subWl)) {
+                                $extracted = extractSubset($element, $subWl);
+                                if (!empty($extracted)) {
+                                    $filtered[$idx] = $extracted;
+                                }
+                            } else {
+                                $filtered[$idx] = $element;
+                            }
+                        } else {
+                            $filtered[$idx] = $element;
+                        }
+                    }
+                    if (!empty($filtered)) {
+                        $result[$key] = $filtered;
+                    }
+                } else {
+                    $childWl = [];
+                    foreach ($whitelist as $wlPath => $_) {
+                        if (strpos($wlPath, $currentPath . '.') === 0) {
+                            $childWl[substr($wlPath, strlen($currentPath) + 1)] = true;
+                        }
+                    }
+                    $childResult = filterRecursive($value, $childWl);
+                    if (!empty($childResult)) {
+                        $result[$key] = $childResult;
+                    }
+                }
+            } else {
+                $result[$key] = $value;
+            }
+        } elseif (is_array($value) && !isSequentialArray($value)) {
+            $childWl = [];
+            foreach ($whitelist as $wlPath => $_) {
+                if (strpos($wlPath, $currentPath . '.') === 0) {
+                    $childWl[substr($wlPath, strlen($currentPath) + 1)] = true;
+                }
+            }
+            if (!empty($childWl)) {
+                $childResult = filterRecursive($value, $childWl);
+                if (!empty($childResult)) {
+                    $result[$key] = $childResult;
+                }
+            }
+        }
+    }
+
+    return $result;
+}
+
+/**
+ * Extract specific fields from an element based on stripped whitelist
+ */
+function extractSubset(array $element, array $whitelist): array
+{
+    $result = [];
+
+    foreach ($element as $key => $value) {
+        $isMatch = isset($whitelist[$key]);
+        if (!$isMatch) {
+            foreach ($whitelist as $wlPath => $_) {
+                if (strpos($wlPath, $key . '.') === 0) {
+                    $isMatch = true;
+                    break;
+                }
+            }
+        }
+
+        if ($isMatch) {
+            if (is_array($value) && !isSequentialArray($value)) {
+                $childWl = [];
+                foreach ($whitelist as $wlPath => $_) {
+                    if (strpos($wlPath, $key . '.') === 0) {
+                        $childWl[substr($wlPath, strlen($key) + 1)] = true;
+                    }
+                }
+                $childResult = extractSubset($value, $childWl);
+                if (!empty($childResult)) {
+                    $result[$key] = $childResult;
+                }
+            } else {
+                $result[$key] = $value;
+            }
+        }
+    }
+
+    return $result;
+}
+
+/**
+ * Check if array is sequential (list) vs associative (dict)
+ */
+function isSequentialArray(array $arr): bool
+{
+    if (empty($arr)) {
+        return false;
+    }
+    return array_keys($arr) === range(0, count($arr) - 1);
 }

@@ -221,7 +221,8 @@ class GithubMessageBuilder
                 }
                 $FileInfo = !empty($FileCounts) ? ' _(' . implode(' ', $FileCounts) . ' files)_' : '';
                 $ByAuthor = $AllSameAuthor ? '' : " by {$Commit['author']['name']}";
-                $Commits[] = "• [" . substr($Commit['id'], 0, 7) . "]({$Commit['url']}) _{$CommitMsg}_{$ByAuthor}{$FileInfo}";
+                $CommitUrl = "https://github.com/{$RepositoryName}/commit/{$Commit['id']}";
+                $Commits[] = "• [" . substr($Commit['id'], 0, 7) . "]({$CommitUrl}) _{$CommitMsg}_{$ByAuthor}{$FileInfo}";
             }
         }
 

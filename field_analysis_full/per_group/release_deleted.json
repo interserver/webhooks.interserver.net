@@ -1,0 +1,1357 @@
+{
+    "meta": {
+        "event": "release",
+        "action": "deleted",
+        "group_key": "release/deleted"
+    },
+    "file_count": 7,
+    "total_unique_fields": 200,
+    "universal_fields": {
+        "count": 166,
+        "fields": [
+            "repo",
+            "event",
+            "data",
+            "data.action",
+            "data.release",
+            "data.release.url",
+            "data.release.assets_url",
+            "data.release.upload_url",
+            "data.release.html_url",
+            "data.release.id",
+            "data.release.author",
+            "data.release.author.login",
+            "data.release.author.id",
+            "data.release.author.node_id",
+            "data.release.author.avatar_url",
+            "data.release.author.gravatar_id",
+            "data.release.author.url",
+            "data.release.author.html_url",
+            "data.release.author.followers_url",
+            "data.release.author.following_url",
+            "data.release.author.gists_url",
+            "data.release.author.starred_url",
+            "data.release.author.subscriptions_url",
+            "data.release.author.organizations_url",
+            "data.release.author.repos_url",
+            "data.release.author.events_url",
+            "data.release.author.received_events_url",
+            "data.release.author.type",
+            "data.release.author.user_view_type",
+            "data.release.author.site_admin",
+            "data.release.node_id",
+            "data.release.tag_name",
+            "data.release.target_commitish",
+            "data.release.name",
+            "data.release.draft",
+            "data.release.immutable",
+            "data.release.prerelease",
+            "data.release.created_at",
+            "data.release.updated_at",
+            "data.release.published_at",
+            "data.release.assets",
+            "data.release.tarball_url",
+            "data.release.zipball_url",
+            "data.release.body",
+            "data.repository",
+            "data.repository.id",
+            "data.repository.node_id",
+            "data.repository.name",
+            "data.repository.full_name",
+            "data.repository.private",
+            "data.repository.owner",
+            "data.repository.owner.login",
+            "data.repository.owner.id",
+            "data.repository.owner.node_id",
+            "data.repository.owner.avatar_url",
+            "data.repository.owner.gravatar_id",
+            "data.repository.owner.url",
+            "data.repository.owner.html_url",
+            "data.repository.owner.followers_url",
+            "data.repository.owner.following_url",
+            "data.repository.owner.gists_url",
+            "data.repository.owner.starred_url",
+            "data.repository.owner.subscriptions_url",
+            "data.repository.owner.organizations_url",
+            "data.repository.owner.repos_url",
+            "data.repository.owner.events_url",
+            "data.repository.owner.received_events_url",
+            "data.repository.owner.type",
+            "data.repository.owner.user_view_type",
+            "data.repository.owner.site_admin",
+            "data.repository.html_url",
+            "data.repository.description",
+            "data.repository.fork",
+            "data.repository.url",
+            "data.repository.forks_url",
+            "data.repository.keys_url",
+            "data.repository.collaborators_url",
+            "data.repository.teams_url",
+            "data.repository.hooks_url",
+            "data.repository.issue_events_url",
+            "data.repository.events_url",
+            "data.repository.assignees_url",
+            "data.repository.branches_url",
+            "data.repository.tags_url",
+            "data.repository.blobs_url",
+            "data.repository.git_tags_url",
+            "data.repository.git_refs_url",
+            "data.repository.trees_url",
+            "data.repository.statuses_url",
+            "data.repository.languages_url",
+            "data.repository.stargazers_url",
+            "data.repository.contributors_url",
+            "data.repository.subscribers_url",
+            "data.repository.subscription_url",
+            "data.repository.commits_url",
+            "data.repository.git_commits_url",
+            "data.repository.comments_url",
+            "data.repository.issue_comment_url",
+            "data.repository.contents_url",
+            "data.repository.compare_url",
+            "data.repository.merges_url",
+            "data.repository.archive_url",
+            "data.repository.downloads_url",
+            "data.repository.issues_url",
+            "data.repository.pulls_url",
+            "data.repository.milestones_url",
+            "data.repository.notifications_url",
+            "data.repository.labels_url",
+            "data.repository.releases_url",
+            "data.repository.deployments_url",
+            "data.repository.created_at",
+            "data.repository.updated_at",
+            "data.repository.pushed_at",
+            "data.repository.git_url",
+            "data.repository.ssh_url",
+            "data.repository.clone_url",
+            "data.repository.svn_url",
+            "data.repository.homepage",
+            "data.repository.size",
+            "data.repository.stargazers_count",
+            "data.repository.watchers_count",
+            "data.repository.language",
+            "data.repository.has_issues",
+            "data.repository.has_projects",
+            "data.repository.has_downloads",
+            "data.repository.has_wiki",
+            "data.repository.has_pages",
+            "data.repository.has_discussions",
+            "data.repository.forks_count",
+            "data.repository.mirror_url",
+            "data.repository.archived",
+            "data.repository.disabled",
+            "data.repository.open_issues_count",
+            "data.repository.license",
+            "data.repository.allow_forking",
+            "data.repository.is_template",
+            "data.repository.web_commit_signoff_required",
+            "data.repository.has_pull_requests",
+            "data.repository.pull_request_creation_policy",
+            "data.repository.topics",
+            "data.repository.topics[]",
+            "data.repository.visibility",
+            "data.repository.forks",
+            "data.repository.open_issues",
+            "data.repository.watchers",
+            "data.repository.default_branch",
+            "data.sender",
+            "data.sender.login",
+            "data.sender.id",
+            "data.sender.node_id",
+            "data.sender.avatar_url",
+            "data.sender.gravatar_id",
+            "data.sender.url",
+            "data.sender.html_url",
+            "data.sender.followers_url",
+            "data.sender.following_url",
+            "data.sender.gists_url",
+            "data.sender.starred_url",
+            "data.sender.subscriptions_url",
+            "data.sender.organizations_url",
+            "data.sender.repos_url",
+            "data.sender.events_url",
+            "data.sender.received_events_url",
+            "data.sender.type",
+            "data.sender.user_view_type",
+            "data.sender.site_admin"
+        ]
+    },
+    "partial_fields": {
+        "count": 34,
+        "fields": [
+            {
+                "field": "data.release.assets[]",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.id",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.node_id",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.name",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.label",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.login",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.id",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.node_id",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.avatar_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.gravatar_id",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.html_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.followers_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.following_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.gists_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.starred_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.subscriptions_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.organizations_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.repos_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.events_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.received_events_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.type",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.user_view_type",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.uploader.site_admin",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.content_type",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.state",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.size",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.digest",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.download_count",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.created_at",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.updated_at",
+                "count": 3,
+                "coverage_percent": 42.86
+            },
+            {
+                "field": "data.release.assets.browser_download_url",
+                "count": 3,
+                "coverage_percent": 42.86
+            }
+        ]
+    },
+    "all_fields_detailed": {
+        "repo": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "event": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.action": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.assets_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.upload_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.html_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.login": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.node_id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.avatar_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.gravatar_id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.html_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.followers_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.following_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.gists_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.starred_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.subscriptions_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.organizations_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.repos_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.events_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.received_events_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.type": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.user_view_type": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.author.site_admin": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.node_id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.tag_name": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.target_commitish": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.name": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.draft": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.immutable": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.prerelease": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.created_at": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.updated_at": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.published_at": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.assets": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.assets[]": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.id": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.node_id": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.name": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.label": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.login": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.id": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.node_id": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.avatar_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.gravatar_id": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.html_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.followers_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.following_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.gists_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.starred_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.subscriptions_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.organizations_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.repos_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.events_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.received_events_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.type": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.user_view_type": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.uploader.site_admin": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.content_type": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.state": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.size": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.digest": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.download_count": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.created_at": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.updated_at": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.assets.browser_download_url": {
+            "count": 3,
+            "coverage_percent": 42.86,
+            "present_in_all": false
+        },
+        "data.release.tarball_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.zipball_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.release.body": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.node_id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.name": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.full_name": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.private": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.login": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.node_id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.avatar_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.gravatar_id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.html_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.followers_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.following_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.gists_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.starred_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.subscriptions_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.organizations_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.repos_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.events_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.received_events_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.type": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.user_view_type": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.site_admin": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.html_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.description": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.fork": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.forks_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.keys_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.collaborators_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.teams_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.hooks_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.issue_events_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.events_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.assignees_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.branches_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.tags_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.blobs_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.git_tags_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.git_refs_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.trees_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.statuses_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.languages_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.stargazers_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.contributors_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.subscribers_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.subscription_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.commits_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.git_commits_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.comments_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.issue_comment_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.contents_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.compare_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.merges_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.archive_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.downloads_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.issues_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.pulls_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.milestones_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.notifications_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.labels_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.releases_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.deployments_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.created_at": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.updated_at": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.pushed_at": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.git_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.ssh_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.clone_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.svn_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.homepage": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.size": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.stargazers_count": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.watchers_count": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.language": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_issues": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_projects": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_downloads": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_wiki": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_pages": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_discussions": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.forks_count": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.mirror_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.archived": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.disabled": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.open_issues_count": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.license": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.allow_forking": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.is_template": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.web_commit_signoff_required": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_pull_requests": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.pull_request_creation_policy": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.topics": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.topics[]": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.visibility": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.forks": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.open_issues": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.watchers": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.default_branch": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.login": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.node_id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.avatar_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.gravatar_id": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.html_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.followers_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.following_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.gists_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.starred_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.subscriptions_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.organizations_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.repos_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.events_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.received_events_url": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.type": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.user_view_type": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.site_admin": {
+            "count": 7,
+            "coverage_percent": 100,
+            "present_in_all": true
+        }
+    }
+}

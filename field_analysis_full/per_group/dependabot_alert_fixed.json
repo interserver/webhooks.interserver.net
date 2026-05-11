@@ -1,0 +1,1433 @@
+{
+    "meta": {
+        "event": "dependabot_alert",
+        "action": "fixed",
+        "group_key": "dependabot_alert/fixed"
+    },
+    "file_count": 92,
+    "total_unique_fields": 218,
+    "universal_fields": {
+        "count": 192,
+        "fields": [
+            "repo",
+            "event",
+            "data",
+            "data.action",
+            "data.alert",
+            "data.alert.number",
+            "data.alert.state",
+            "data.alert.dependency",
+            "data.alert.dependency.package",
+            "data.alert.dependency.package.ecosystem",
+            "data.alert.dependency.package.name",
+            "data.alert.dependency.manifest_path",
+            "data.alert.dependency.scope",
+            "data.alert.dependency.relationship",
+            "data.alert.security_advisory",
+            "data.alert.security_advisory.ghsa_id",
+            "data.alert.security_advisory.cve_id",
+            "data.alert.security_advisory.summary",
+            "data.alert.security_advisory.description",
+            "data.alert.security_advisory.severity",
+            "data.alert.security_advisory.identifiers",
+            "data.alert.security_advisory.identifiers[]",
+            "data.alert.security_advisory.identifiers.value",
+            "data.alert.security_advisory.identifiers.type",
+            "data.alert.security_advisory.references",
+            "data.alert.security_advisory.references[]",
+            "data.alert.security_advisory.references.url",
+            "data.alert.security_advisory.published_at",
+            "data.alert.security_advisory.updated_at",
+            "data.alert.security_advisory.withdrawn_at",
+            "data.alert.security_advisory.vulnerabilities",
+            "data.alert.security_advisory.vulnerabilities[]",
+            "data.alert.security_advisory.vulnerabilities.package",
+            "data.alert.security_advisory.vulnerabilities.package.ecosystem",
+            "data.alert.security_advisory.vulnerabilities.package.name",
+            "data.alert.security_advisory.vulnerabilities.severity",
+            "data.alert.security_advisory.vulnerabilities.vulnerable_version_range",
+            "data.alert.security_advisory.vulnerabilities.first_patched_version",
+            "data.alert.security_advisory.cvss_severities",
+            "data.alert.security_advisory.cvss_severities.cvss_v3",
+            "data.alert.security_advisory.cvss_severities.cvss_v3.vector_string",
+            "data.alert.security_advisory.cvss_severities.cvss_v3.score",
+            "data.alert.security_advisory.cvss_severities.cvss_v4",
+            "data.alert.security_advisory.cvss_severities.cvss_v4.vector_string",
+            "data.alert.security_advisory.cvss_severities.cvss_v4.score",
+            "data.alert.security_advisory.cvss",
+            "data.alert.security_advisory.cvss.vector_string",
+            "data.alert.security_advisory.cvss.score",
+            "data.alert.security_advisory.cwes",
+            "data.alert.security_advisory.cwes[]",
+            "data.alert.security_advisory.cwes.cwe_id",
+            "data.alert.security_advisory.cwes.name",
+            "data.alert.security_vulnerability",
+            "data.alert.security_vulnerability.package",
+            "data.alert.security_vulnerability.package.ecosystem",
+            "data.alert.security_vulnerability.package.name",
+            "data.alert.security_vulnerability.severity",
+            "data.alert.security_vulnerability.vulnerable_version_range",
+            "data.alert.security_vulnerability.first_patched_version",
+            "data.alert.url",
+            "data.alert.html_url",
+            "data.alert.created_at",
+            "data.alert.updated_at",
+            "data.alert.dismissal_request",
+            "data.alert.assignees",
+            "data.alert.dismissed_at",
+            "data.alert.dismissed_by",
+            "data.alert.dismissed_reason",
+            "data.alert.dismissed_comment",
+            "data.alert.fixed_at",
+            "data.alert.auto_dismissed_at",
+            "data.repository",
+            "data.repository.id",
+            "data.repository.node_id",
+            "data.repository.name",
+            "data.repository.full_name",
+            "data.repository.private",
+            "data.repository.owner",
+            "data.repository.owner.login",
+            "data.repository.owner.id",
+            "data.repository.owner.node_id",
+            "data.repository.owner.avatar_url",
+            "data.repository.owner.gravatar_id",
+            "data.repository.owner.url",
+            "data.repository.owner.html_url",
+            "data.repository.owner.followers_url",
+            "data.repository.owner.following_url",
+            "data.repository.owner.gists_url",
+            "data.repository.owner.starred_url",
+            "data.repository.owner.subscriptions_url",
+            "data.repository.owner.organizations_url",
+            "data.repository.owner.repos_url",
+            "data.repository.owner.events_url",
+            "data.repository.owner.received_events_url",
+            "data.repository.owner.type",
+            "data.repository.owner.user_view_type",
+            "data.repository.owner.site_admin",
+            "data.repository.html_url",
+            "data.repository.description",
+            "data.repository.fork",
+            "data.repository.url",
+            "data.repository.forks_url",
+            "data.repository.keys_url",
+            "data.repository.collaborators_url",
+            "data.repository.teams_url",
+            "data.repository.hooks_url",
+            "data.repository.issue_events_url",
+            "data.repository.events_url",
+            "data.repository.assignees_url",
+            "data.repository.branches_url",
+            "data.repository.tags_url",
+            "data.repository.blobs_url",
+            "data.repository.git_tags_url",
+            "data.repository.git_refs_url",
+            "data.repository.trees_url",
+            "data.repository.statuses_url",
+            "data.repository.languages_url",
+            "data.repository.stargazers_url",
+            "data.repository.contributors_url",
+            "data.repository.subscribers_url",
+            "data.repository.subscription_url",
+            "data.repository.commits_url",
+            "data.repository.git_commits_url",
+            "data.repository.comments_url",
+            "data.repository.issue_comment_url",
+            "data.repository.contents_url",
+            "data.repository.compare_url",
+            "data.repository.merges_url",
+            "data.repository.archive_url",
+            "data.repository.downloads_url",
+            "data.repository.issues_url",
+            "data.repository.pulls_url",
+            "data.repository.milestones_url",
+            "data.repository.notifications_url",
+            "data.repository.labels_url",
+            "data.repository.releases_url",
+            "data.repository.deployments_url",
+            "data.repository.created_at",
+            "data.repository.updated_at",
+            "data.repository.pushed_at",
+            "data.repository.git_url",
+            "data.repository.ssh_url",
+            "data.repository.clone_url",
+            "data.repository.svn_url",
+            "data.repository.homepage",
+            "data.repository.size",
+            "data.repository.stargazers_count",
+            "data.repository.watchers_count",
+            "data.repository.language",
+            "data.repository.has_issues",
+            "data.repository.has_projects",
+            "data.repository.has_downloads",
+            "data.repository.has_wiki",
+            "data.repository.has_pages",
+            "data.repository.has_discussions",
+            "data.repository.forks_count",
+            "data.repository.mirror_url",
+            "data.repository.archived",
+            "data.repository.disabled",
+            "data.repository.open_issues_count",
+            "data.repository.license",
+            "data.repository.allow_forking",
+            "data.repository.is_template",
+            "data.repository.web_commit_signoff_required",
+            "data.repository.has_pull_requests",
+            "data.repository.pull_request_creation_policy",
+            "data.repository.topics",
+            "data.repository.visibility",
+            "data.repository.forks",
+            "data.repository.open_issues",
+            "data.repository.watchers",
+            "data.repository.default_branch",
+            "data.sender",
+            "data.sender.login",
+            "data.sender.id",
+            "data.sender.node_id",
+            "data.sender.avatar_url",
+            "data.sender.gravatar_id",
+            "data.sender.url",
+            "data.sender.html_url",
+            "data.sender.followers_url",
+            "data.sender.following_url",
+            "data.sender.gists_url",
+            "data.sender.starred_url",
+            "data.sender.subscriptions_url",
+            "data.sender.organizations_url",
+            "data.sender.repos_url",
+            "data.sender.events_url",
+            "data.sender.received_events_url",
+            "data.sender.type",
+            "data.sender.user_view_type",
+            "data.sender.site_admin"
+        ]
+    },
+    "partial_fields": {
+        "count": 26,
+        "fields": [
+            {
+                "field": "data.alert.security_advisory.vulnerabilities.first_patched_version.identifier",
+                "count": 91,
+                "coverage_percent": 98.91
+            },
+            {
+                "field": "data.alert.security_vulnerability.first_patched_version.identifier",
+                "count": 91,
+                "coverage_percent": 98.91
+            },
+            {
+                "field": "data.alert.security_advisory.epss",
+                "count": 84,
+                "coverage_percent": 91.3
+            },
+            {
+                "field": "data.alert.security_advisory.epss.percentage",
+                "count": 84,
+                "coverage_percent": 91.3
+            },
+            {
+                "field": "data.alert.security_advisory.epss.percentile",
+                "count": 84,
+                "coverage_percent": 91.3
+            },
+            {
+                "field": "data.repository.license.key",
+                "count": 61,
+                "coverage_percent": 66.3
+            },
+            {
+                "field": "data.repository.license.name",
+                "count": 61,
+                "coverage_percent": 66.3
+            },
+            {
+                "field": "data.repository.license.spdx_id",
+                "count": 61,
+                "coverage_percent": 66.3
+            },
+            {
+                "field": "data.repository.license.url",
+                "count": 61,
+                "coverage_percent": 66.3
+            },
+            {
+                "field": "data.repository.license.node_id",
+                "count": 61,
+                "coverage_percent": 66.3
+            },
+            {
+                "field": "data.alert.security_advisory.classification",
+                "count": 53,
+                "coverage_percent": 57.61
+            },
+            {
+                "field": "data.repository.topics[]",
+                "count": 42,
+                "coverage_percent": 45.65
+            },
+            {
+                "field": "data.repository.custom_properties",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.login",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.id",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.node_id",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.url",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.repos_url",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.events_url",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.hooks_url",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.issues_url",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.members_url",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.public_members_url",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.avatar_url",
+                "count": 41,
+                "coverage_percent": 44.57
+            },
+            {
+                "field": "data.organization.description",
+                "count": 41,
+                "coverage_percent": 44.57
+            }
+        ]
+    },
+    "all_fields_detailed": {
+        "repo": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "event": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.action": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.number": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.state": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dependency": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dependency.package": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dependency.package.ecosystem": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dependency.package.name": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dependency.manifest_path": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dependency.scope": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dependency.relationship": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.ghsa_id": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cve_id": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.summary": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.description": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.severity": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.identifiers": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.identifiers[]": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.identifiers.value": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.identifiers.type": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.references": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.references[]": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.references.url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.published_at": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.updated_at": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.withdrawn_at": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.vulnerabilities": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.vulnerabilities[]": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.vulnerabilities.package": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.vulnerabilities.package.ecosystem": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.vulnerabilities.package.name": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.vulnerabilities.severity": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.vulnerabilities.vulnerable_version_range": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.vulnerabilities.first_patched_version": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.vulnerabilities.first_patched_version.identifier": {
+            "count": 91,
+            "coverage_percent": 98.91,
+            "present_in_all": false
+        },
+        "data.alert.security_advisory.cvss_severities": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cvss_severities.cvss_v3": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cvss_severities.cvss_v3.vector_string": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cvss_severities.cvss_v3.score": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cvss_severities.cvss_v4": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cvss_severities.cvss_v4.vector_string": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cvss_severities.cvss_v4.score": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.epss": {
+            "count": 84,
+            "coverage_percent": 91.3,
+            "present_in_all": false
+        },
+        "data.alert.security_advisory.epss.percentage": {
+            "count": 84,
+            "coverage_percent": 91.3,
+            "present_in_all": false
+        },
+        "data.alert.security_advisory.epss.percentile": {
+            "count": 84,
+            "coverage_percent": 91.3,
+            "present_in_all": false
+        },
+        "data.alert.security_advisory.cvss": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cvss.vector_string": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cvss.score": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cwes": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cwes[]": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cwes.cwe_id": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.cwes.name": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_advisory.classification": {
+            "count": 53,
+            "coverage_percent": 57.61,
+            "present_in_all": false
+        },
+        "data.alert.security_vulnerability": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_vulnerability.package": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_vulnerability.package.ecosystem": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_vulnerability.package.name": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_vulnerability.severity": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_vulnerability.vulnerable_version_range": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_vulnerability.first_patched_version": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.security_vulnerability.first_patched_version.identifier": {
+            "count": 91,
+            "coverage_percent": 98.91,
+            "present_in_all": false
+        },
+        "data.alert.url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.html_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.created_at": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.updated_at": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dismissal_request": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.assignees": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dismissed_at": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dismissed_by": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dismissed_reason": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.dismissed_comment": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.fixed_at": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.alert.auto_dismissed_at": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.id": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.node_id": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.name": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.full_name": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.private": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.login": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.id": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.node_id": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.avatar_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.gravatar_id": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.html_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.followers_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.following_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.gists_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.starred_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.subscriptions_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.organizations_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.repos_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.events_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.received_events_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.type": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.user_view_type": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.owner.site_admin": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.html_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.description": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.fork": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.forks_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.keys_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.collaborators_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.teams_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.hooks_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.issue_events_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.events_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.assignees_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.branches_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.tags_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.blobs_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.git_tags_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.git_refs_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.trees_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.statuses_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.languages_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.stargazers_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.contributors_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.subscribers_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.subscription_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.commits_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.git_commits_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.comments_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.issue_comment_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.contents_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.compare_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.merges_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.archive_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.downloads_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.issues_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.pulls_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.milestones_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.notifications_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.labels_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.releases_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.deployments_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.created_at": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.updated_at": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.pushed_at": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.git_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.ssh_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.clone_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.svn_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.homepage": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.size": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.stargazers_count": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.watchers_count": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.language": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_issues": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_projects": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_downloads": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_wiki": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_pages": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_discussions": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.forks_count": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.mirror_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.archived": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.disabled": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.open_issues_count": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.license": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.license.key": {
+            "count": 61,
+            "coverage_percent": 66.3,
+            "present_in_all": false
+        },
+        "data.repository.license.name": {
+            "count": 61,
+            "coverage_percent": 66.3,
+            "present_in_all": false
+        },
+        "data.repository.license.spdx_id": {
+            "count": 61,
+            "coverage_percent": 66.3,
+            "present_in_all": false
+        },
+        "data.repository.license.url": {
+            "count": 61,
+            "coverage_percent": 66.3,
+            "present_in_all": false
+        },
+        "data.repository.license.node_id": {
+            "count": 61,
+            "coverage_percent": 66.3,
+            "present_in_all": false
+        },
+        "data.repository.allow_forking": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.is_template": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.web_commit_signoff_required": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.has_pull_requests": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.pull_request_creation_policy": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.topics": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.visibility": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.forks": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.open_issues": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.watchers": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.default_branch": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.custom_properties": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.login": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.id": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.node_id": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.url": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.repos_url": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.events_url": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.hooks_url": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.issues_url": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.members_url": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.public_members_url": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.avatar_url": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.organization.description": {
+            "count": 41,
+            "coverage_percent": 44.57,
+            "present_in_all": false
+        },
+        "data.sender": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.login": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.id": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.node_id": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.avatar_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.gravatar_id": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.html_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.followers_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.following_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.gists_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.starred_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.subscriptions_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.organizations_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.repos_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.events_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.received_events_url": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.type": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.user_view_type": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.sender.site_admin": {
+            "count": 92,
+            "coverage_percent": 100,
+            "present_in_all": true
+        },
+        "data.repository.topics[]": {
+            "count": 42,
+            "coverage_percent": 45.65,
+            "present_in_all": false
+        }
+    }
+}

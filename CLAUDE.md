@@ -1,6 +1,6 @@
 # GitHub Webhooks RocketChat/Teams Announcer
 
-PHP webhook receiver (`web/github.php`) that validates GitHub event signatures, routes by event type, logs to `log/`, and POSTs to Rocket Chat + Microsoft Teams.
+PHP webhook receiver (`web/github.php`) that validates GitHub event signatures, builds chat-formatted notifications, and enqueues them to Redis (with direct Power Automate POST fallback) for RocketChat + Microsoft Teams delivery.
 
 ## Commands
 
@@ -15,44 +15,43 @@ vendor/bin/php-cs-fixer fix
 ## Architecture
 
 - **Entry**: `web/github.php` (active) · `web/github-old.php` (legacy, RC-only)
-- **Core**: `src/GithubWebhook.php` · `src/GithubMessageBuilder.php` · `src/IgnoredEventException.php` · `src/NotImplementedException.php`
-- **Config**: `src/config.php` (gitignored) — defines `GITHUB_WEBHOOKS_SECRET` and `$chatChannels['rocketchat']` / `$chatChannels['teams']`
-- **Logs**: `log/` — JSON files named `Ymd_His_eventtype_action_user_repo.json`
+- **Core**: `src/GithubWebhook.php` · `src/GithubMessageBuilder.php` · `src/NotificationQueue.php` · `src/IgnoredEventException.php` · `src/NotImplementedException.php`
+- **Config**: `.env` (copied from `.env.dist`) — defines `GITHUB_WEBHOOKS_SECRET`, `NOTIF_QUEUE_ENABLED`, `NOTIF_QUEUE_KEY_PREFIX`, `REDIS_HOST`, `REDIS_PORT`, `LOG_LEVEL`, `RATE_LIMIT_WINDOW`. RocketChat / Teams webhook URLs live in `src/config.php` (gitignored) under `$chatChannels['rocketchat']` / `$chatChannels['teams']`
+- **Logs**: `log/Y/m/d/` — JSON files named `His_eventtype_action_user_repo.json` (verbosity controlled by `LOG_LEVEL`)
+- **Field analysis**: `scripts/analyze_fields.php`, `scripts/filter_webhook.php`, `scripts/filter_webhook_batch.php` produce reports under `field_analysis_full/` (per-group JSON, `frequency_matrix.json`, `FIELD_CATEGORIZATION.md`)
 - **Tests**: `tests/` via `phpunit.xml` · fixtures in `tests/events/{event_name}/`
 - **Quality**: `phpstan.neon` · `phpstan-bootstrap.php` · `.php-cs-fixer.dist.php` (PSR2 + PHP74Migration)
 - **CI**: `.github/` — GitHub Actions workflows (`.github/workflows/ci.yml`)
 
 ## Event Handling Pattern
 
-All event handling lives in `web/github.php` inside a `switch ($EventType)` block:
+All event handling lives in `web/github.php`:
 
 ```php
 // 1. Validate signature — always first
 if (!$Hook->ValidateHubSignature(GITHUB_WEBHOOKS_SECRET)) {
     throw new Exception('Secret validation failed.');
 }
-// 2. Log every event to log/ before processing
-file_put_contents(__DIR__.'/../log/'.date('Ymd_His').'_'.$EventType
-    .(isset($Message['action']) ? '_'.$Message['action'] : '')
-    .'_'.$User.'_'.str_replace(['/', '-', ' '], '_', $RepositoryName).'.json',
-    json_encode($log, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-// 3. Route by event type — $Builder->build() called before switch
-switch ($EventType) {
-    case 'push': /* ... */ SendToChat($channelName, $Msg, $useRC, $useTeams); break;
-    default: SendToChat($channelName, $Msg, $useRC, $useTeams); break;
-}
+// 2. Pick room from $RepositoryName ('int-dev-announce' for sugarcraft/* and a
+//    short detain/* allowlist; otherwise 'notifications')
+// 3. Build the chat-formatted message
+$Builder = new GithubMessageBuilder($EventType, $Message);
+$Msg     = $Builder->build();
+// 4. Enqueue to Redis; falls back to direct Power Automate POST when disabled
+//    or unavailable
+$queue = new NotificationQueue();
+$queue->enqueueMessage($room, $Msg['text'], $dedupKey, $EventType, $action, $RepositoryName, $Message, $fallbackWebhookUrl);
+// 5. Log disposition via NotificationQueue::getLastStatus()
 ```
 
-## SendToChat Signature
+## NotificationQueue
 
-```php
-SendToChat(string $Where, array $Payload, bool $useRC = true, bool $useTeams = true): bool
-```
-- `$Where` maps to `$chatChannels['rocketchat'][$Where]` and `$chatChannels['teams'][$Where]`
-- Pre-switch sets `$channelName = 'notifications'` (or `'int-dev-announce'` for `sugarcraft/*` and `detain/scoop-emulators` / `detain/detain` / `detain/sugarcraft`); pass it as `$Where`
-- Pre-switch defaults: `$useRC = false`, `$useTeams = true` — set `$useRC = true` per-case to enable Rocket Chat
-- Teams payload wraps `$Payload['text']` in `['type' => 'message', 'message' => ...]`
-- Always set `$useRC`/`$useTeams` flags per-case; some repos skip Teams (see `issues` case)
+`src/NotificationQueue.php` enqueues a JSON envelope to Redis via `LPUSH` when `NOTIF_QUEUE_ENABLED=true` (default); otherwise it POSTs directly to the Power Automate `fallback_webhook_url`.
+
+- **Envelope keys**: `v`, `id` (uuid), `ts`, `expires_at`, `room`, `type`, `message`, `card`, `extra.dedup_key`, `extra.event_type`, `extra.action`, `extra.repo`, `extra.data`, `extra.source`, `fallback_webhook_url`
+- **Dedup keys** (per event): `github:push:{repo}:{branch}` · `github:issue:{repo}:{number}` · `github:pr:{repo}:{number}` · `github:checkrun:{repo}:{sha7}` · `github:check:{repo}:{sha7}` · `github:wf:{repo}:{branch}:{name}` · `github:wfjob:{repo}:{branch}:{jobName}` · `github:wiki:{repo}` · `github:status:{repo}:{sha7}` · `github:{event}:{repo}` for `star`/`watch`/`fork`/`ping`
+- **Oversize handling**: when the JSON exceeds 256KB, `extra.data` is stripped first, then the message text is truncated
+- **`getLastStatus()`** returns one of: `queued`, `direct_flag_off`, `direct_no_redis`, `direct_redis_exception`, `direct_oversize`, `failed_no_fallback`
 
 ## Exception Handling
 
@@ -93,19 +92,14 @@ caliber refresh && git add CLAUDE.md .claude/ .cursor/ .github/copilot-instructi
 Read `CALIBER_LEARNINGS.md` for patterns and anti-patterns learned from previous sessions.
 These are auto-extracted from real tool usage — treat them as project-specific rules.
 
-<!-- caliber:managed:model-config -->
 ## Model Configuration
 
 Recommended default: `claude-sonnet-4-6` with high effort (stronger reasoning; higher cost and latency than smaller models).
 Smaller/faster models trade quality for speed and cost — pick what fits the task.
 Pin your choice (`/model` in Claude Code, or `CALIBER_MODEL` when using Caliber with an API provider) so upstream default changes do not silently change behavior.
 
-<!-- /caliber:managed:model-config -->
-
-<!-- caliber:managed:sync -->
 ## Context Sync
 
 This project uses [Caliber](https://github.com/caliber-ai-org/ai-setup) to keep AI agent configs in sync across Claude Code, Cursor, Copilot, and Codex.
 Configs update automatically before each commit via `caliber refresh`.
 If the pre-commit hook is not set up, run `/setup-caliber` to configure everything automatically.
-<!-- /caliber:managed:sync -->

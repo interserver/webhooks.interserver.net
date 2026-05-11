@@ -1,0 +1,701 @@
+{
+    "meta": {
+        "log_file": "log.txt",
+        "generated_at": "2026-05-11T14:36:31-04:00",
+        "parallel_forks": 10,
+        "temp_dir": "/tmp/field_analyzer_2795599"
+    },
+    "total_unique_fields": 2413,
+    "events": [
+        "workflow_run",
+        "workflow_job",
+        "check_run",
+        "check_suite",
+        "push",
+        "release",
+        "status",
+        "issue_comment",
+        "issues",
+        "dependabot_alert",
+        "repository_vulnerability_alert",
+        "pull_request",
+        "create",
+        "delete",
+        "pull_request_review",
+        "label",
+        "pull_request_review_comment",
+        "pull_request_review_thread",
+        "ping",
+        "deployment_status",
+        "deployment",
+        "page_build",
+        "watch",
+        "star",
+        "repository",
+        "gollum",
+        "fork",
+        "deploy_key",
+        "security_and_analysis"
+    ],
+    "event_count": 29,
+    "group_count": 56,
+    "groups": [
+        "check_run/completed",
+        "check_run/created",
+        "check_suite/completed",
+        "create/none",
+        "delete/none",
+        "dependabot_alert/auto_dismissed",
+        "dependabot_alert/auto_reopened",
+        "dependabot_alert/created",
+        "dependabot_alert/fixed",
+        "dependabot_alert/reintroduced",
+        "deploy_key/created",
+        "deployment/created",
+        "deployment_status/created",
+        "fork/none",
+        "gollum/none",
+        "issue_comment/created",
+        "issue_comment/edited",
+        "issues/closed",
+        "issues/edited",
+        "issues/labeled",
+        "issues/opened",
+        "issues/reopened",
+        "label/created",
+        "page_build/none",
+        "ping/none",
+        "pull_request/assigned",
+        "pull_request/closed",
+        "pull_request/edited",
+        "pull_request/labeled",
+        "pull_request/opened",
+        "pull_request/synchronize",
+        "pull_request_review/submitted",
+        "pull_request_review_comment/created",
+        "pull_request_review_thread/resolved",
+        "push/none",
+        "release/created",
+        "release/deleted",
+        "release/edited",
+        "release/published",
+        "release/released",
+        "repository/created",
+        "repository/edited",
+        "repository/renamed",
+        "repository_vulnerability_alert/create",
+        "repository_vulnerability_alert/resolve",
+        "security_and_analysis/none",
+        "star/created",
+        "status/none",
+        "watch/started",
+        "workflow_job/completed",
+        "workflow_job/in_progress",
+        "workflow_job/queued",
+        "workflow_job/waiting",
+        "workflow_run/completed",
+        "workflow_run/in_progress",
+        "workflow_run/requested"
+    ],
+    "group_counts": {
+        "workflow_run": {
+            "requested": 2810,
+            "in_progress": 3797,
+            "completed": 3599
+        },
+        "workflow_job": {
+            "queued": 7258,
+            "completed": 68897,
+            "in_progress": 63058,
+            "waiting": 62
+        },
+        "check_run": {
+            "created": 7900,
+            "completed": 70800
+        },
+        "check_suite": {
+            "completed": 5694
+        },
+        "push": {
+            "none": 4784
+        },
+        "release": {
+            "edited": 70,
+            "created": 6,
+            "published": 6,
+            "deleted": 7,
+            "released": 6
+        },
+        "status": {
+            "none": 800
+        },
+        "issue_comment": {
+            "created": 428,
+            "edited": 4
+        },
+        "issues": {
+            "closed": 72,
+            "edited": 2106,
+            "opened": 301,
+            "labeled": 302,
+            "reopened": 11
+        },
+        "dependabot_alert": {
+            "created": 246,
+            "fixed": 92,
+            "reintroduced": 30,
+            "auto_dismissed": 13,
+            "auto_reopened": 2
+        },
+        "repository_vulnerability_alert": {
+            "create": 242,
+            "resolve": 87
+        },
+        "pull_request": {
+            "edited": 20,
+            "labeled": 33,
+            "closed": 470,
+            "opened": 463,
+            "synchronize": 25,
+            "assigned": 3
+        },
+        "create": {
+            "none": 546
+        },
+        "delete": {
+            "none": 507
+        },
+        "pull_request_review": {
+            "submitted": 33
+        },
+        "label": {
+            "created": 33
+        },
+        "pull_request_review_comment": {
+            "created": 34
+        },
+        "pull_request_review_thread": {
+            "resolved": 4
+        },
+        "ping": {
+            "none": 211
+        },
+        "deployment_status": {
+            "created": 247
+        },
+        "deployment": {
+            "created": 63
+        },
+        "page_build": {
+            "none": 30
+        },
+        "watch": {
+            "started": 135
+        },
+        "star": {
+            "created": 135
+        },
+        "repository": {
+            "edited": 228,
+            "renamed": 4,
+            "created": 4
+        },
+        "gollum": {
+            "none": 15
+        },
+        "fork": {
+            "none": 1
+        },
+        "deploy_key": {
+            "created": 1
+        },
+        "security_and_analysis": {
+            "none": 1
+        }
+    },
+    "events_summary": {
+        "workflow_run": {
+            "total_files": 10206,
+            "total_unique_fields": 1164,
+            "actions_count": 3,
+            "actions": {
+                "requested": {
+                    "files": 2810,
+                    "unique_fields": 388,
+                    "universal_fields_count": 350
+                },
+                "in_progress": {
+                    "files": 3797,
+                    "unique_fields": 388,
+                    "universal_fields_count": 350
+                },
+                "completed": {
+                    "files": 3599,
+                    "unique_fields": 388,
+                    "universal_fields_count": 350
+                }
+            }
+        },
+        "workflow_job": {
+            "total_files": 139275,
+            "total_unique_fields": 1077,
+            "actions_count": 4,
+            "actions": {
+                "queued": {
+                    "files": 7258,
+                    "unique_fields": 271,
+                    "universal_fields_count": 150
+                },
+                "completed": {
+                    "files": 68897,
+                    "unique_fields": 271,
+                    "universal_fields_count": 149
+                },
+                "in_progress": {
+                    "files": 63058,
+                    "unique_fields": 271,
+                    "universal_fields_count": 150
+                },
+                "waiting": {
+                    "files": 62,
+                    "unique_fields": 264,
+                    "universal_fields_count": 226
+                }
+            }
+        },
+        "check_run": {
+            "total_files": 78700,
+            "total_unique_fields": 704,
+            "actions_count": 2,
+            "actions": {
+                "created": {
+                    "files": 7900,
+                    "unique_fields": 352,
+                    "universal_fields_count": 238
+                },
+                "completed": {
+                    "files": 70800,
+                    "unique_fields": 352,
+                    "universal_fields_count": 238
+                }
+            }
+        },
+        "check_suite": {
+            "total_files": 5694,
+            "total_unique_fields": 254,
+            "actions_count": 1,
+            "actions": {
+                "completed": {
+                    "files": 5694,
+                    "unique_fields": 254,
+                    "universal_fields_count": 193
+                }
+            }
+        },
+        "push": {
+            "total_files": 4784,
+            "total_unique_fields": 207,
+            "actions_count": 1,
+            "actions": {
+                "none": {
+                    "files": 4784,
+                    "unique_fields": 207,
+                    "universal_fields_count": 141
+                }
+            }
+        },
+        "release": {
+            "total_files": 95,
+            "total_unique_fields": 899,
+            "actions_count": 5,
+            "actions": {
+                "edited": {
+                    "files": 70,
+                    "unique_fields": 201,
+                    "universal_fields_count": 167
+                },
+                "created": {
+                    "files": 6,
+                    "unique_fields": 166,
+                    "universal_fields_count": 166
+                },
+                "published": {
+                    "files": 6,
+                    "unique_fields": 166,
+                    "universal_fields_count": 166
+                },
+                "deleted": {
+                    "files": 7,
+                    "unique_fields": 200,
+                    "universal_fields_count": 166
+                },
+                "released": {
+                    "files": 6,
+                    "unique_fields": 166,
+                    "universal_fields_count": 166
+                }
+            }
+        },
+        "status": {
+            "total_files": 800,
+            "total_unique_fields": 233,
+            "actions_count": 1,
+            "actions": {
+                "none": {
+                    "files": 800,
+                    "unique_fields": 233,
+                    "universal_fields_count": 213
+                }
+            }
+        },
+        "issue_comment": {
+            "total_files": 432,
+            "total_unique_fields": 653,
+            "actions_count": 2,
+            "actions": {
+                "created": {
+                    "files": 428,
+                    "unique_fields": 366,
+                    "universal_fields_count": 225
+                },
+                "edited": {
+                    "files": 4,
+                    "unique_fields": 287,
+                    "universal_fields_count": 287
+                }
+            }
+        },
+        "issues": {
+            "total_files": 2792,
+            "total_unique_fields": 1122,
+            "actions_count": 5,
+            "actions": {
+                "closed": {
+                    "files": 72,
+                    "unique_fields": 222,
+                    "universal_fields_count": 193
+                },
+                "edited": {
+                    "files": 2106,
+                    "unique_fields": 227,
+                    "universal_fields_count": 204
+                },
+                "opened": {
+                    "files": 301,
+                    "unique_fields": 222,
+                    "universal_fields_count": 193
+                },
+                "labeled": {
+                    "files": 302,
+                    "unique_fields": 230,
+                    "universal_fields_count": 209
+                },
+                "reopened": {
+                    "files": 11,
+                    "unique_fields": 221,
+                    "universal_fields_count": 201
+                }
+            }
+        },
+        "dependabot_alert": {
+            "total_files": 383,
+            "total_unique_fields": 1088,
+            "actions_count": 5,
+            "actions": {
+                "created": {
+                    "files": 246,
+                    "unique_fields": 218,
+                    "universal_fields_count": 194
+                },
+                "fixed": {
+                    "files": 92,
+                    "unique_fields": 218,
+                    "universal_fields_count": 192
+                },
+                "reintroduced": {
+                    "files": 30,
+                    "unique_fields": 218,
+                    "universal_fields_count": 192
+                },
+                "auto_dismissed": {
+                    "files": 13,
+                    "unique_fields": 218,
+                    "universal_fields_count": 197
+                },
+                "auto_reopened": {
+                    "files": 2,
+                    "unique_fields": 216,
+                    "universal_fields_count": 216
+                }
+            }
+        },
+        "repository_vulnerability_alert": {
+            "total_files": 329,
+            "total_unique_fields": 318,
+            "actions_count": 2,
+            "actions": {
+                "create": {
+                    "files": 242,
+                    "unique_fields": 158,
+                    "universal_fields_count": 138
+                },
+                "resolve": {
+                    "files": 87,
+                    "unique_fields": 160,
+                    "universal_fields_count": 139
+                }
+            }
+        },
+        "pull_request": {
+            "total_files": 1014,
+            "total_unique_fields": 3299,
+            "actions_count": 6,
+            "actions": {
+                "edited": {
+                    "files": 20,
+                    "unique_fields": 511,
+                    "universal_fields_count": 481
+                },
+                "labeled": {
+                    "files": 33,
+                    "unique_fields": 514,
+                    "universal_fields_count": 496
+                },
+                "closed": {
+                    "files": 470,
+                    "unique_fields": 578,
+                    "universal_fields_count": 480
+                },
+                "opened": {
+                    "files": 463,
+                    "unique_fields": 578,
+                    "universal_fields_count": 480
+                },
+                "synchronize": {
+                    "files": 25,
+                    "unique_fields": 561,
+                    "universal_fields_count": 482
+                },
+                "assigned": {
+                    "files": 3,
+                    "unique_fields": 557,
+                    "universal_fields_count": 557
+                }
+            }
+        },
+        "create": {
+            "total_files": 546,
+            "total_unique_fields": 149,
+            "actions_count": 1,
+            "actions": {
+                "none": {
+                    "files": 546,
+                    "unique_fields": 149,
+                    "universal_fields_count": 129
+                }
+            }
+        },
+        "delete": {
+            "total_files": 507,
+            "total_unique_fields": 147,
+            "actions_count": 1,
+            "actions": {
+                "none": {
+                    "files": 507,
+                    "unique_fields": 147,
+                    "universal_fields_count": 127
+                }
+            }
+        },
+        "pull_request_review": {
+            "total_files": 33,
+            "total_unique_fields": 543,
+            "actions_count": 1,
+            "actions": {
+                "submitted": {
+                    "files": 33,
+                    "unique_fields": 543,
+                    "universal_fields_count": 503
+                }
+            }
+        },
+        "label": {
+            "total_files": 33,
+            "total_unique_fields": 153,
+            "actions_count": 1,
+            "actions": {
+                "created": {
+                    "files": 33,
+                    "unique_fields": 153,
+                    "universal_fields_count": 133
+                }
+            }
+        },
+        "pull_request_review_comment": {
+            "total_files": 34,
+            "total_unique_fields": 570,
+            "actions_count": 1,
+            "actions": {
+                "created": {
+                    "files": 34,
+                    "unique_fields": 570,
+                    "universal_fields_count": 529
+                }
+            }
+        },
+        "pull_request_review_thread": {
+            "total_files": 4,
+            "total_unique_fields": 529,
+            "actions_count": 1,
+            "actions": {
+                "resolved": {
+                    "files": 4,
+                    "unique_fields": 529,
+                    "universal_fields_count": 528
+                }
+            }
+        },
+        "ping": {
+            "total_files": 211,
+            "total_unique_fields": 168,
+            "actions_count": 1,
+            "actions": {
+                "none": {
+                    "files": 211,
+                    "unique_fields": 168,
+                    "universal_fields_count": 148
+                }
+            }
+        },
+        "deployment_status": {
+            "total_files": 247,
+            "total_unique_fields": 361,
+            "actions_count": 1,
+            "actions": {
+                "created": {
+                    "files": 247,
+                    "unique_fields": 361,
+                    "universal_fields_count": 323
+                }
+            }
+        },
+        "deployment": {
+            "total_files": 63,
+            "total_unique_fields": 313,
+            "actions_count": 1,
+            "actions": {
+                "created": {
+                    "files": 63,
+                    "unique_fields": 313,
+                    "universal_fields_count": 275
+                }
+            }
+        },
+        "page_build": {
+            "total_files": 30,
+            "total_unique_fields": 169,
+            "actions_count": 1,
+            "actions": {
+                "none": {
+                    "files": 30,
+                    "unique_fields": 169,
+                    "universal_fields_count": 169
+                }
+            }
+        },
+        "watch": {
+            "total_files": 135,
+            "total_unique_fields": 145,
+            "actions_count": 1,
+            "actions": {
+                "started": {
+                    "files": 135,
+                    "unique_fields": 145,
+                    "universal_fields_count": 125
+                }
+            }
+        },
+        "star": {
+            "total_files": 135,
+            "total_unique_fields": 146,
+            "actions_count": 1,
+            "actions": {
+                "created": {
+                    "files": 135,
+                    "unique_fields": 146,
+                    "universal_fields_count": 126
+                }
+            }
+        },
+        "repository": {
+            "total_files": 236,
+            "total_unique_fields": 443,
+            "actions_count": 3,
+            "actions": {
+                "edited": {
+                    "files": 228,
+                    "unique_fields": 155,
+                    "universal_fields_count": 126
+                },
+                "renamed": {
+                    "files": 4,
+                    "unique_fields": 149,
+                    "universal_fields_count": 129
+                },
+                "created": {
+                    "files": 4,
+                    "unique_fields": 139,
+                    "universal_fields_count": 139
+                }
+            }
+        },
+        "gollum": {
+            "total_files": 15,
+            "total_unique_fields": 133,
+            "actions_count": 1,
+            "actions": {
+                "none": {
+                    "files": 15,
+                    "unique_fields": 133,
+                    "universal_fields_count": 133
+                }
+            }
+        },
+        "fork": {
+            "total_files": 1,
+            "total_unique_fields": 240,
+            "actions_count": 1,
+            "actions": {
+                "none": {
+                    "files": 1,
+                    "unique_fields": 240,
+                    "universal_fields_count": 240
+                }
+            }
+        },
+        "deploy_key": {
+            "total_files": 1,
+            "total_unique_fields": 150,
+            "actions_count": 1,
+            "actions": {
+                "created": {
+                    "files": 1,
+                    "unique_fields": 150,
+                    "universal_fields_count": 150
+                }
+            }
+        },
+        "security_and_analysis": {
+            "total_files": 1,
+            "total_unique_fields": 368,
+            "actions_count": 1,
+            "actions": {
+                "none": {
+                    "files": 1,
+                    "unique_fields": 368,
+                    "universal_fields_count": 368
+                }
+            }
+        }
+    }
+}
