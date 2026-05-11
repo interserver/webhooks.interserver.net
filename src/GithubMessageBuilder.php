@@ -244,11 +244,12 @@ class GithubMessageBuilder
 
     private function buildCheckText(array $Message, string $RepositoryName): string
     {
-        $Status = $Message['check_suite']['conclusion'] ?? $Message['check_run']['conclusion'] ?? 'in_progress';
-        $Name = $Message['check_suite']['app']['name'] ?? $Message['check_run']['name'];
-        $Url = $Message['check_suite']['url'] ?? $Message['check_run']['html_url'];
-        $Branch = $Message['check_suite']['head_branch'] ?? $Message['check_run']['check_suite']['head_branch'] ?? '';
-        $CommitMsg = $Message['check_suite']['head_commit']['message'] ?? $Message['check_run']['check_suite']['head_commit']['message'] ?? '';
+        $HasCheckRun = isset($Message['check_run']);
+        $Status = $Message['check_suite']['conclusion'] ?? ($HasCheckRun ? $Message['check_run']['conclusion'] : null) ?? 'in_progress';
+        $Name = $Message['check_suite']['app']['name'] ?? ($HasCheckRun ? $Message['check_run']['name'] : null) ?? 'Check';
+        $Url = $Message['check_suite']['url'] ?? ($HasCheckRun ? $Message['check_run']['html_url'] : null) ?? '#';
+        $Branch = $Message['check_suite']['head_branch'] ?? ($HasCheckRun ? ($Message['check_run']['check_suite']['head_branch'] ?? '') : '') ?: '';
+        $CommitMsg = $Message['check_suite']['head_commit']['message'] ?? ($HasCheckRun ? ($Message['check_run']['check_suite']['head_commit']['message'] ?? '') : '') ?: '';
 
         $Emoji = $Status === 'success' ? "✅" : ($Status === 'failure' ? "❌" : "⏳");
         $ChatMsg = "{$Emoji} Check **{$Name}** {$Status} "
