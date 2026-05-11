@@ -367,33 +367,33 @@ Volume: 4,784 events
 $push_useful = [
     'data.ref',                      // "refs/heads/branch-name"
     'data.before',                   // before commit SHA
-    'data.after',                    // after commit SHA
+    'data.after',                    // after commit SHA (CORRELATION - links to CI)
     'data.forced',                   // forced push?
     'data.created',                  // branch created?
     'data.deleted',                  // branch deleted?
     'data.base_ref',                 // base branch (if PR)
     'data.compare',                  // comparison URL
     'data.commits',                  // array of commits
+    'data.commits[].id',             // commit SHA (CORRELATION)
     'data.commits[].message',        // commit message
     'data.commits[].author.name',    // author name
     'data.commits[].author.email',   // author email
     'data.commits[].added',          // files added
     'data.commits[].removed',        // files removed
     'data.commits[].modified',       // files modified
-    'data.head_commit.message',      // latest commit message
-    'data.head_commit.author.name',  // author name
+    'data.commits[].distinct',       // is this a new commit?
     'data.pusher.name',              // pusher username
     'data.pusher.email',             // pusher email
 ];
 ```
 
+**Note**: Commit URLs are constructed from `https://github.com/{repo}/commit/{commits[].id}`
+
 ### SKIP
 ```php
 $push_skip = [
-    // Commits - URLs and IDs
-    'data.commits[].id',
+    // Commits - IDs and metadata (URL is constructed, not stored)
     'data.commits[].tree_id',
-    'data.commits[].distinct',
     'data.commits[].timestamp',
     'data.commits[].url',
     'data.commits[].author.date',
@@ -401,23 +401,13 @@ $push_skip = [
     'data.commits[].committer.date',
     'data.commits[].committer.username',
 
-    'data.head_commit.id',
-    'data.head_commit.tree_id',
-    'data.head_commit.distinct',
-    'data.head_commit.timestamp',
-    'data.head_commit.url',
-    'data.head_commit.author.date',
-    'data.head_commit.author.username',
-    'data.head_commit.committer.date',
-    'data.head_commit.committer.username',
+    // head_commit - entirely skipped (use commits[] array instead)
+    'data.head_commit',
 
     // Array markers
     'data.commits.added[]',
     'data.commits.removed[]',
     'data.commits.modified[]',
-    'data.head_commit.added[]',
-    'data.head_commit.removed[]',
-    'data.head_commit.modified[]',
 
     // Organization detail
     'data.organization.login',
@@ -665,35 +655,31 @@ Volume: 10,206 events
 ```php
 $workflow_run_useful = [
     'data.action',
-    'data.workflow_run.name',        // workflow name (e.g., "CI")
-    'data.workflow_run.head_branch', // branch name
-    'data.workflow_run.head_sha',    // commit SHA
+    'data.workflow_run.id',              // CORRELATION - links to jobs
+    'data.workflow_run.name',            // workflow name (e.g., "CI")
+    'data.workflow_run.workflow_id',
+    'data.workflow_run.head_branch',     // branch name
+    'data.workflow_run.head_sha',        // commit SHA (CORRELATION)
     'data.workflow_run.display_title',
     'data.workflow_run.run_number',
-    'data.workflow_run.event',       // push, pull_request, etc
-    'data.workflow_run.status',      // queued, in_progress, completed
-    'data.workflow_run.conclusion',  // success, failure, cancelled
-    'data.workflow_run.html_url',    // link to run
+    'data.workflow_run.event',           // push, pull_request, etc
+    'data.workflow_run.status',          // queued, in_progress, completed
+    'data.workflow_run.conclusion',      // success, failure, cancelled
     'data.workflow_run.run_attempt',
     'data.workflow_run.created_at',
     'data.workflow_run.updated_at',
     'data.workflow_run.run_started_at',
-    'data.workflow_run.jobs_url',
-    'data.workflow_run.actor.login',       // who triggered
-    'data.workflow_run.triggering_actor.login',
-    'data.workflow_run.head_commit.message',
 ];
 ```
+
+**Note**: No html_url, jobs_url, or actor info - IDs are sufficient for correlation.
 
 ### SKIP
 ```php
 $workflow_run_skip = [
-    'data.workflow_run.id',
-    'data.workflow_run.node_id',
-    'data.workflow_run.path',
-    'data.workflow_run.workflow_id',
-    'data.workflow_run.check_suite_id',
-    'data.workflow_run.check_suite_node_id',
+    // URLs - we have IDs for correlation
+    'data.workflow_run.html_url',
+    'data.workflow_run.jobs_url',
     'data.workflow_run.url',
     'data.workflow_run.pull_requests',
     'data.workflow_run.referenced_workflows',
@@ -704,18 +690,18 @@ $workflow_run_skip = [
     'data.workflow_run.cancel_url',
     'data.workflow_run.rerun_url',
 
-    // Actor sub-fields
-    'data.workflow_run.actor.id',
-    'data.workflow_run.actor.node_id',
-    'data.workflow_run.actor.gravatar_id',
-    'data.workflow_run.actor.url',
-    'data.workflow_run.actor.followers_url',
-    // ... etc
+    // IDs and node_ids
+    'data.workflow_run.node_id',
+    'data.workflow_run.path',
+    'data.workflow_run.check_suite_id',
+    'data.workflow_run.check_suite_node_id',
 
-    // Triggering actor sub-fields (same pattern)
-    'data.workflow_run.triggering_actor.*', // all sub-fields
+    // Actor info - not needed for workflow notifications
+    'data.workflow_run.actor',
+    'data.workflow_run.triggering_actor',
 
-    // Repository, head_repository, head_commit - many nested URL/ID fields
+    // head_commit - skipped entirely
+    'data.workflow_run.head_commit',
 ];
 ```
 
@@ -728,18 +714,21 @@ Volume: 139,275 events (HIGHEST VOLUME)
 ### USEFUL
 ```php
 $workflow_job_useful = [
-    'data.action',                   // queued, in_progress, completed, waiting
-    'data.workflow_job.name',        // job name (e.g., "Build", "Test")
-    'data.workflow_job.workflow_name', // workflow name
-    'data.workflow_job.head_branch', // branch
-    'data.workflow_job.status',      // queued, in_progress, completed
-    'data.workflow_job.conclusion',  // success, failure, skipped, cancelled
+    'data.action',                      // queued, in_progress, completed, waiting
+    'data.workflow_job.id',             // CORRELATION
+    'data.workflow_job.run_id',         // CORRELATION - links to parent workflow_run
+    'data.workflow_job.name',           // job name (e.g., "Build", "Test")
+    'data.workflow_job.workflow_name',  // workflow name
+    'data.workflow_job.head_branch',    // branch
+    'data.workflow_job.head_sha',       // commit SHA (CORRELATION)
+    'data.workflow_job.status',         // queued, in_progress, completed
+    'data.workflow_job.conclusion',     // success, failure, skipped, cancelled
+    'data.workflow_job.created_at',
     'data.workflow_job.started_at',
     'data.workflow_job.completed_at',
-    'data.workflow_job.html_url',    // link to job
-    'data.workflow_job.runner_name', // "GitHub Actions 123"
-    'data.workflow_job.labels',      // runner labels array
-    'data.workflow_job.steps',       // array of steps
+    'data.workflow_job.runner_name',    // e.g., "ubuntu-latest"
+    'data.workflow_job.labels',         // runner labels array
+    'data.workflow_job.steps',          // array of steps
     'data.workflow_job.steps[].name',
     'data.workflow_job.steps[].status',
     'data.workflow_job.steps[].conclusion',
@@ -747,22 +736,25 @@ $workflow_job_useful = [
 ];
 ```
 
+**Note**: No html_url, run_url - IDs are sufficient for correlation.
+
 ### SKIP
 ```php
 $workflow_job_skip = [
-    'data.workflow_job.id',
-    'data.workflow_job.run_id',
-    'data.workflow_job.node_id',
-    'data.workflow_job.head_sha',
+    // URLs - we have IDs for correlation
+    'data.workflow_job.html_url',
     'data.workflow_job.run_url',
-    'data.workflow_job.run_attempt',
     'data.workflow_job.url',
     'data.workflow_job.check_run_url',
+
+    // IDs
+    'data.workflow_job.node_id',
+    'data.workflow_job.run_attempt',
     'data.workflow_job.runner_id',
     'data.workflow_job.runner_group_id',
     'data.workflow_job.runner_group_name',
 
-    // Steps - we only care about name/status/conclusion
+    // Steps - only name/status/conclusion needed (no timestamps)
     'data.workflow_job.steps[].started_at',
     'data.workflow_job.steps[].completed_at',
 ];
@@ -778,8 +770,10 @@ Volume: 78,700 events
 ```php
 $check_run_useful = [
     'data.action',
+    'data.check_run.id',
     'data.check_run.name',           // e.g., "ESLint", "Build"
-    'data.check_run.head_sha',
+    'data.check_run.head_sha',       // CORRELATION
+    'data.check_run.check_suite_id', // CORRELATION - links to suite
     'data.check_run.status',         // completed
     'data.check_run.conclusion',     // success, failure, neutral
     'data.check_run.started_at',
@@ -788,37 +782,42 @@ $check_run_useful = [
     'data.check_run.details_url',    // external details URL
     'data.check_run.output.title',   // check output title
     'data.check_run.output.summary', // check output summary
+    'data.check_run.output.text',
+    'data.check_run.output.annotations_count',
     'data.check_run.app.name',       // GitHub App name
+    'data.check_run.app.html_url',
+
+    // check_suite nested fields (needed for message builder fallback)
+    'data.check_run.check_suite.head_branch',
+    'data.check_run.check_suite.head_commit.message',
 ];
 ```
 
 ### SKIP
 ```php
 $check_run_skip = [
-    'data.check_run.id',
     'data.check_run.node_id',
     'data.check_run.external_id',
     'data.check_run.url',
-    'data.check_run.output.text',
-    'data.check_run.output.annotations_count',
     'data.check_run.output.annotations_url',
 
-    // check_suite nested - many URL/ID fields
+    // check_suite nested - most fields skipped
     'data.check_run.check_suite.id',
     'data.check_run.check_suite.node_id',
-    // ... etc
+    'data.check_run.check_suite.head_sha',
+    'data.check_run.check_suite.status',
+    'data.check_run.check_suite.conclusion',
+    'data.check_run.check_suite.app',
 
     // App sub-fields
     'data.check_run.app.id',
     'data.check_run.app.client_id',
     'data.check_run.app.slug',
     'data.check_run.app.node_id',
-    'data.check_run.app.html_url',
     'data.check_run.app.created_at',
     'data.check_run.app.updated_at',
     'data.check_run.app.permissions',
     'data.check_run.app.events',
-    // etc
 ];
 ```
 
@@ -832,13 +831,27 @@ Volume: 5,694 events
 ```php
 $check_suite_useful = [
     'data.action',
+    'data.check_suite.id',               // CORRELATION
     'data.check_suite.head_branch',
-    'data.check_suite.head_sha',
+    'data.check_suite.head_sha',         // CORRELATION
     'data.check_suite.status',
     'data.check_suite.conclusion',
     'data.check_suite.html_url',
-    'data.check_suite.app.name',     // GitHub App
+    'data.check_suite.app.name',         // GitHub App
     'data.check_suite.head_commit.message',
+    'data.check_suite.head_commit.author.name',
+
+    // Pull requests
+    'data.check_suite.pull_requests',
+    'data.check_suite.pull_requests[].number',
+    'data.check_suite.pull_requests[].head.ref',
+
+    // check_run fields (needed for message builder fallback)
+    'data.check_run.conclusion',
+    'data.check_run.name',
+    'data.check_run.html_url',
+    'data.check_run.check_suite.head_branch',
+    'data.check_run.check_suite.head_commit.message',
 ];
 ```
 
@@ -846,7 +859,6 @@ $check_suite_useful = [
 ```php
 $check_suite_skip = [
     // Most check_suite fields are URLs, IDs, permissions
-    'data.check_suite.id',
     'data.check_suite.node_id',
     'data.check_suite.url',
     'data.check_suite.before',
@@ -1287,7 +1299,7 @@ $repository_useful = [
     'data.repository.full_name',
     'data.repository.html_url',
     'data.repository.description',
-    'data.repository.homepage',
+    // NOTE: homepage removed per user request
     'data.repository.default_branch',
 
     // For edited action
@@ -1300,6 +1312,8 @@ $repository_useful = [
     'data.changes.repository.name',
 ];
 ```
+
+**Note**: Only `full_name` is typically needed for repo identity, html_url is kept for editing events.
 
 ---
 

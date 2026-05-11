@@ -566,6 +566,10 @@ return [
             // App info
             'data.check_run.app.name',
             'data.check_run.app.html_url',
+
+            // check_suite nested fields (used in message builder)
+            'data.check_run.check_suite.head_branch',
+            'data.check_run.check_suite.head_commit.message',
         ],
 
         'check_suite' => [
@@ -596,6 +600,13 @@ return [
             'data.check_suite.pull_requests',
             'data.check_suite.pull_requests[].number',
             'data.check_suite.pull_requests[].head.ref',
+
+            // check_run fields (used as fallback in message builder)
+            'data.check_run.conclusion',
+            'data.check_run.name',
+            'data.check_run.html_url',
+            'data.check_run.check_suite.head_branch',
+            'data.check_run.check_suite.head_commit.message',
         ],
 
         'release' => [
