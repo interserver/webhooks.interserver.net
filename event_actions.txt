@@ -1,6 +1,6 @@
 check_run:completed,created
 check_suite:completed
-create:create
+create:
 delete:
 dependabot_alert:auto_dismissed,auto_reopened,created,fixed,reintroduced
 deploy_key:created
@@ -8,12 +8,12 @@ deployment:created
 deployment_status:created
 dynamic:
 fork:
-gollum:created,edited
+gollum:
 issue_comment:created,edited
 issues:closed,edited,labeled,opened,reopened
 label:created
 page_build:
-ping:created,edited,started
+ping:
 pull_request:assigned,closed,created,edited,labeled,opened,resolved,submitted,synchronize
 pull_request_review:created,resolved,submitted
 pull_request_review_comment:created
