@@ -177,35 +177,46 @@ function pickRoom(string $repo): string
 
 function buildDedupKey(string $eventType, string $repo, array $payload): string
 {
+    // Helper to extract short SHA from payload
+    $getSha = function(array $payload, string $shaKey): string {
+        $sha = (string)($payload[$shaKey] ?? '');
+        return $sha !== '' ? substr($sha, 0, 7) : '';
+    };
+
     switch ($eventType) {
+        // All events that carry a commit SHA now use github:commit:{repo}:{sha7}
+        // This allows the consumer to group push + check_run + workflow_job for the same commit.
         case 'check_run':
-            $sha = (string)($payload['check_run']['head_sha'] ?? '');
-            return "github:checkrun:{$repo}:" . substr($sha, 0, 7);
+            $sha = $getSha($payload['check_run'] ?? [], 'head_sha');
+            return $sha !== '' ? "github:commit:{$repo}:{$sha}" : "github:checkrun:{$repo}";
         case 'check_suite':
-            $sha = (string)($payload['check_suite']['head_sha'] ?? '');
-            return "github:check:{$repo}:" . substr($sha, 0, 7);
+            $sha = $getSha($payload['check_suite'] ?? [], 'head_sha');
+            return $sha !== '' ? "github:commit:{$repo}:{$sha}" : "github:check:{$repo}";
         case 'workflow_run':
-            $branch = (string)($payload['workflow_run']['head_branch'] ?? '');
-            $name = (string)($payload['workflow_run']['name'] ?? 'workflow');
-            return "github:wf:{$repo}:{$branch}:{$name}";
+            $sha = $getSha($payload['workflow_run'] ?? [], 'head_sha');
+            return $sha !== '' ? "github:commit:{$repo}:{$sha}" : "github:wf:{$repo}";
         case 'workflow_job':
-            $branch = (string)($payload['workflow_job']['head_branch'] ?? '');
-            $jobName = (string)($payload['workflow_job']['name'] ?? 'job');
-            return "github:wfjob:{$repo}:{$branch}:{$jobName}";
+            $sha = $getSha($payload['workflow_job'] ?? [], 'head_sha');
+            return $sha !== '' ? "github:commit:{$repo}:{$sha}" : "github:wfjob:{$repo}";
+        case 'push':
+            // Use 'after' SHA (the commit that was pushed), not the branch
+            $sha = $getSha($payload, 'after');
+            if ($sha === '' && !empty($payload['commits'])) {
+                $lastCommit = end($payload['commits']);
+                $sha = substr((string)($lastCommit['id'] ?? ''), 0, 7);
+            }
+            return $sha !== '' ? "github:commit:{$repo}:{$sha}" : "github:push:{$repo}";
         case 'issues':
             $num = (int)($payload['issue']['number'] ?? 0);
             return "github:issue:{$repo}:{$num}";
         case 'pull_request':
             $num = (int)($payload['pull_request']['number'] ?? 0);
             return "github:pr:{$repo}:{$num}";
-        case 'push':
-            $branch = isset($payload['ref']) ? str_replace('refs/heads/', '', (string)$payload['ref']) : 'unknown';
-            return "github:push:{$repo}:{$branch}";
         case 'gollum':
             return "github:wiki:{$repo}";
         case 'status':
-            $sha = (string)($payload['sha'] ?? '');
-            return "github:status:{$repo}:" . substr($sha, 0, 7);
+            $sha = $getSha($payload, 'sha');
+            return $sha !== '' ? "github:commit:{$repo}:{$sha}" : "github:status:{$repo}";
         case 'star':
         case 'watch':
         case 'fork':
