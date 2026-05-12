@@ -168,8 +168,13 @@ try {
 
 function pickRoom(string $repo): string
 {
-    if (strpos($repo, 'sugarcraft/') === 0
-        || in_array($repo, ['detain/CandyCore', 'detain/scoop-emulators', 'detain/detain', 'detain/sugarcraft', 'detain/watchable', 'detain/php-dup-finder'], true)) {
+    // TEMP: detain/sugarcraft + sugarcraft/* routed to `notifications` for
+    // now (was `int-dev-announce`). Move back when the experiment is done.
+    // Both sides of the upstream→downstream pair are kept in the same room
+    // so the bot's action-triggered push attribution can still nest the
+    // sugarcraft/* sync pushes under the detain/sugarcraft parent commit
+    // (trackable storage is keyed by room).
+    if (in_array($repo, ['detain/CandyCore', 'detain/scoop-emulators', 'detain/detain', 'detain/watchable', 'detain/php-dup-finder'], true)) {
         return 'int-dev-announce';
     }
     return 'notifications';
