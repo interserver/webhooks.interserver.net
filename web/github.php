@@ -16,6 +16,7 @@ require_once __DIR__ . '/../src/GithubMessageBuilder.php';
 require_once __DIR__ . '/../src/IgnoredEventException.php';
 require_once __DIR__ . '/../src/NotImplementedException.php';
 require_once __DIR__ . '/../src/NotificationQueue.php';
+require_once __DIR__ . '/../src/CodeReviewQueue.php';
 
 const GITHUB_LOG_DIR = __DIR__ . '/../log';
 
@@ -142,6 +143,24 @@ try {
         'data' => $Payload,
         'source' => 'webhooks/github.php',
     ]);
+
+    // Enqueue PR opened/sync events to code review queue
+    if ($EventType === 'pull_request' && in_array($action, ['opened', 'synchronize'], true)) {
+        $pr = $Payload['pull_request'] ?? [];
+        $author = $pr['user'] ?? [];
+        CodeReviewQueue::enqueue([
+            'repo' => $RepositoryName,
+            'pr_number' => (int)($pr['number'] ?? 0),
+            'action' => $action,
+            'head_branch' => $pr['head']['ref'] ?? '',
+            'base_branch' => $pr['base']['ref'] ?? '',
+            'pr_url' => $pr['html_url'] ?? '',
+            'author' => $author['login'] ?? '',
+            'author_url' => $author['html_url'] ?? '',
+            'sha' => $pr['head']['sha'] ?? '',
+        ]);
+    }
+
     $disposition = NotificationQueue::getLastStatus();
     $previewText = $text !== '' ? mb_substr(preg_replace('/\s+/u', ' ', $text), 0, 100) : '<no-text>';
     error_log(sprintf(

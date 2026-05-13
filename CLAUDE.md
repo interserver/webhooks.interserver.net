@@ -10,14 +10,16 @@ vendor/bin/phpunit
 vendor/bin/phpstan analyse
 vendor/bin/php-cs-fixer fix --dry-run
 vendor/bin/php-cs-fixer fix
+php scripts/github-code-review.php
 ```
 
 ## Architecture
 
 - **Entry**: `web/github.php` (active) · `web/github-old.php` (legacy, RC-only)
-- **Core**: `src/GithubWebhook.php` · `src/GithubMessageBuilder.php` · `src/NotificationQueue.php` · `src/IgnoredEventException.php` · `src/NotImplementedException.php`
-- **Config**: `.env` (copied from `.env.dist`) — defines `GITHUB_WEBHOOKS_SECRET`, `NOTIF_QUEUE_ENABLED`, `NOTIF_QUEUE_KEY_PREFIX`, `REDIS_HOST`, `REDIS_PORT`, `LOG_LEVEL`, `RATE_LIMIT_WINDOW`. RocketChat / Teams webhook URLs live in `src/config.php` (gitignored) under `$chatChannels['rocketchat']` / `$chatChannels['teams']`
+- **Core**: `src/GithubWebhook.php` · `src/GithubMessageBuilder.php` · `src/NotificationQueue.php` · `src/CodeReviewQueue.php` · `src/IgnoredEventException.php` · `src/NotImplementedException.php`
+- **Config**: `.env` (copied from `.env.dist`) — defines `GITHUB_WEBHOOKS_SECRET`, `NOTIF_QUEUE_ENABLED`, `NOTIF_QUEUE_KEY_PREFIX`, `REDIS_HOST`, `REDIS_PORT`, `LOG_LEVEL`, `RATE_LIMIT_WINDOW`, plus code-review queue keys. RocketChat / Teams webhook URLs live in `src/config.php` (gitignored) under `$chatChannels['rocketchat']` / `$chatChannels['teams']`
 - **Logs**: `log/Y/m/d/` — JSON files named `His_eventtype_action_user_repo.json` (verbosity controlled by `LOG_LEVEL`)
+- **Code review**: `src/CodeReviewQueue.php` enqueues push events for async review by `scripts/github-code-review.php`
 - **Field analysis**: `scripts/analyze_fields.php`, `scripts/filter_webhook.php`, `scripts/filter_webhook_batch.php` produce reports under `field_analysis_full/` (per-group JSON, `frequency_matrix.json`, `FIELD_CATEGORIZATION.md`)
 - **Tests**: `tests/` via `phpunit.xml` · fixtures in `tests/events/{event_name}/`
 - **Quality**: `phpstan.neon` · `phpstan-bootstrap.php` · `.php-cs-fixer.dist.php` (PSR2 + PHP74Migration)
@@ -41,7 +43,8 @@ $Msg     = $Builder->build();
 //    or unavailable
 $queue = new NotificationQueue();
 $queue->enqueueMessage($room, $Msg['text'], $dedupKey, $EventType, $action, $RepositoryName, $Message, $fallbackWebhookUrl);
-// 5. Log disposition via NotificationQueue::getLastStatus()
+// 5. For push events, also enqueue to CodeReviewQueue for async review
+// 6. Log disposition via NotificationQueue::getLastStatus()
 ```
 
 ## NotificationQueue
