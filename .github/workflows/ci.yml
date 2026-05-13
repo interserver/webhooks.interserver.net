@@ -10,9 +10,13 @@ jobs:
         php: [7.4]
     steps:
     - uses: actions/checkout@v1
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php }}
     - name: Install dependencies
       run: composer install --no-interaction --no-progress
     - name: Run tests
-      run: php${{ matrix.php }} vendor/bin/phpunit --verbose --fail-on-warning --coverage-text
+      run: vendor/bin/phpunit --verbose --fail-on-warning --coverage-text
     - name: Run phpstan
-      run: php${{ matrix.php }} vendor/bin/phpstan analyse
+      run: vendor/bin/phpstan analyse
