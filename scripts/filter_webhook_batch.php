@@ -154,8 +154,6 @@ if ($hasErrors) {
     exit(1);
 }
 
-exit(0);
-
 /**
  * Build complete whitelist of field paths to keep
  */
@@ -373,3 +371,5 @@ function isSequentialArray(array $arr): bool
     }
     return array_keys($arr) === range(0, count($arr) - 1);
 }
+
+exit(0);

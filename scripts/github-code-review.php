@@ -72,7 +72,7 @@ function main(): void
 
         try {
             $result = processJob($job);
-            if ($result === true) {
+            if ($result === 'true') {
                 error_log("github-code-review: completed job {$jobId}");
             } elseif (is_string($result) && str_starts_with($result, 'no_issues')) {
                 error_log("github-code-review: no issues found for {$job['repo']}#{$job['pr_number']}");
@@ -94,9 +94,9 @@ function main(): void
  * Process a single code review job
  *
  * @param array $job Envelope from CodeReviewQueue
- * @return bool|string True on success, error message on failure, or "no_issues" string
+ * @return string True on success, error message on failure, or "no_issues" string
  */
-function processJob(array $job): bool|string
+function processJob(array $job): string
 {
     global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $opencodeImproveCmd;
 
@@ -116,7 +116,7 @@ function processJob(array $job): bool|string
     // Checkout the PR branch
     $checkoutPath = "{$checkoutRoot}/{$repo}/{$prNumber}";
     $checkoutOk = checkoutBranch($repo, $headBranch, $checkoutPath);
-    if ($checkoutOk !== true) {
+    if ($checkoutOk !== 'true') {
         return 'checkout failed: ' . $checkoutOk;
     }
 
@@ -150,7 +150,7 @@ function processJob(array $job): bool|string
         exec("rm -rf " . escapeshellarg($checkoutPath));
     }
 
-    return true;
+    return 'true';
 }
 
 /**
@@ -195,7 +195,7 @@ function processIssue(array $issue, string $checkoutPath, string $token, string 
         // Post issue without fix
         $commentBody = buildIssueComment($issue, null, $repo, $prNumber, false);
         $postResult = postPrComment($token, $repo, $prNumber, $commentBody);
-        return $postResult === true;
+        return $postResult === 'true';
     }
 
     // Apply the fix to the file
@@ -214,7 +214,7 @@ function processIssue(array $issue, string $checkoutPath, string $token, string 
     // Post as a review comment (with line reference if possible)
     $postResult = postPrReviewComment($token, $repo, $prNumber, $commentBody, $sha, $file, $line);
 
-    return $postResult === true;
+    return $postResult === 'true';
 }
 
 /**
@@ -417,8 +417,9 @@ function getFileDiff(string $checkoutPath, string $file, string $originalContent
 
 /**
  * Clone/fetch the repository and checkout the target branch
+ * @return string True on success, error message on failure
  */
-function checkoutBranch(string $repo, string $branch, string $checkoutPath): bool|string
+function checkoutBranch(string $repo, string $branch, string $checkoutPath): string
 {
     $repoUrl = "https://github.com/{$repo}.git";
 
@@ -474,7 +475,7 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): boo
         }
     }
 
-    return true;
+    return 'true';
 }
 
 /**
@@ -536,8 +537,9 @@ function parseAnalysisOutput(string $rawOutput): array
 
 /**
  * Post a regular comment to a GitHub PR (not a review comment)
+ * @return string True on success, error message on failure
  */
-function postPrComment(string $token, string $repo, int $prNumber, string $body): bool|string
+function postPrComment(string $token, string $repo, int $prNumber, string $body): string
 {
     [$owner, $repoName] = explode('/', $repo, 2);
     $url = "https://api.github.com/repos/{$owner}/{$repoName}/pulls/{$prNumber}/comments";
@@ -574,13 +576,14 @@ function postPrComment(string $token, string $repo, int $prNumber, string $body)
         return "GitHub API returned HTTP {$httpCode}: {$response}";
     }
 
-    return true;
+    return 'true';
 }
 
 /**
  * Post a review comment to a GitHub PR with line reference
+ * @return string True on success, error message on failure
  */
-function postPrReviewComment(string $token, string $repo, int $prNumber, string $body, string $commitSha, string $path, int $line): bool|string
+function postPrReviewComment(string $token, string $repo, int $prNumber, string $body, string $commitSha, string $path, int $line): string
 {
     if ($commitSha === '' || $path === '' || $line <= 0) {
         // Fall back to regular comment
@@ -636,7 +639,7 @@ function postPrReviewComment(string $token, string $repo, int $prNumber, string 
         return "GitHub API returned HTTP {$httpCode}: {$response}";
     }
 
-    return true;
+    return 'true';
 }
 
 /**
