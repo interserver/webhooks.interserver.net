@@ -141,7 +141,8 @@ class GithubMessageBuilder
         }
 
         if (!empty($Issue['body'])) {
-            $ChatMsg .= "\n\n> " . substr($Issue['body'], 0, 500) . (strlen($Issue['body']) > 500 ? "…" : "");
+            $body = self::stripImages($Issue['body']);
+            $ChatMsg .= "\n\n> " . substr($body, 0, 500) . (strlen($body) > 500 ? "…" : "");
         }
 
         return $ChatMsg;
@@ -190,7 +191,8 @@ class GithubMessageBuilder
         }
 
         if (!empty($PR['body'])) {
-            $ChatMsg .= "\n\n> " . substr($PR['body'], 0, 500) . (strlen($PR['body']) > 500 ? "…" : "");
+            $body = self::stripImages($PR['body']);
+            $ChatMsg .= "\n\n> " . substr($body, 0, 500) . (strlen($body) > 500 ? "…" : "");
         }
 
         return $ChatMsg;
@@ -325,5 +327,15 @@ class GithubMessageBuilder
         return "ℹ️ {$Alias} triggered a **{$EventType}** event "
              . (isset($Message['action']) ? "({$Message['action']}) " : "")
              . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
+    }
+
+    private static function stripImages(string $text): string
+    {
+        // Remove markdown images: ![alt](url)
+        $text = preg_replace('/!\[.*?\]\(.*?\)/', '', $text);
+        // Remove HTML <img> tags and their contents
+        $text = preg_replace('/<img[^>]*>.*?<\/img>/', '', $text);
+        $text = preg_replace('/<img[^>]*\/>/', '', $text);
+        return trim($text);
     }
 }
