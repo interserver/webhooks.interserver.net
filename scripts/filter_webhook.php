@@ -167,7 +167,7 @@ function buildWhitelistForEvent(string $event, array $baseWhitelist, array $even
 /**
  * Recursively filter array by whitelist
  */
-function filterRecursive(array $data, array $whitelist, string $prefix = 'data'): array
+function filterRecursive(array $data, array $whitelist, string $prefix): array
 {
     $result = [];
 

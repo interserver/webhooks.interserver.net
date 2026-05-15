@@ -236,6 +236,10 @@ function buildDedupKey(string $eventType, string $repo, array $payload): string
         case 'status':
             $sha = $getSha($payload, 'sha');
             return $sha !== '' ? "github:commit:{$repo}:{$sha}" : "github:status:{$repo}";
+        case 'deployment':
+        case 'deployment_status':
+            $sha = $getSha($payload['deployment'] ?? [], 'sha');
+            return $sha !== '' ? "github:commit:{$repo}:{$sha}" : "github:{$eventType}:{$repo}";
         case 'star':
         case 'watch':
         case 'fork':

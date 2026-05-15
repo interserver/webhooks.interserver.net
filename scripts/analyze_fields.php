@@ -101,7 +101,8 @@ class ParallelFieldAnalyzer
         echo "Waiting for {$numChunks} child processes to complete...\n";
         $completed = 0;
         foreach ($pids as $i => $pid) {
-            pcntl_waitpid($pid, $status[$i]);
+            $status = 0;
+            pcntl_waitpid($pid, $status);
             $completed++;
             if ($completed % 2 === 0 || $completed === $numChunks) {
                 echo "  Completed {$completed}/{$numChunks} child processes...\n";
@@ -299,10 +300,6 @@ class ParallelFieldAnalyzer
         }
 
         foreach ($data as $key => $value) {
-            if (!is_string($key) && !is_int($key)) {
-                continue;
-            }
-
             $path = empty($prefix) ? (string)$key : $prefix . '.' . (string)$key;
 
             if (is_array($value)) {
@@ -822,7 +819,7 @@ class ParallelFieldAnalyzer
     }
 
     /**
-     * @param array<string, array<string, array<string, int>>> $fieldCounts
+     * @param array<string, array<string, array<string, mixed>>> $fieldCounts
      */
     private function getAllGroupKeys(array $fieldCounts): array
     {
