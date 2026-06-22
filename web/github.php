@@ -127,7 +127,7 @@ try {
     $Builder = new GithubMessageBuilder($EventType, $Payload);
     try {
         $Built = $Builder->build();
-        $text = $Built['text'] ?? '';
+        $text = $Built['text'];
     } catch (\Throwable $e) {
         // Builder may not handle every event; carry an empty text and let
         // the bot decide what to do with the raw data.
@@ -188,7 +188,7 @@ try {
 function pickRoom(string $repo): string
 {
     if (strpos($repo, 'sugarcraft/') === 0
-        || in_array($repo, ['detain/CandyCore', 'detain/scoop-emulators', 'detain/detain', 'detain/sugarcraft', 'detain/watchable', 'detain/php-dup-finder'], true)) {
+        || in_array($repo, ['detain/CandyCore', 'detain/scoop-emulators', 'detain/detain', 'detain/sugarcraft', 'detain/watchable', 'detain/php-dup-finder', 'interserver/interserver-api-samples'], true)) {
         return 'int-dev-announce';
     }
     return 'notifications';
@@ -325,7 +325,7 @@ function filterWebhookPayload(array $data, array $whitelist, string $event): arr
                             $childWl[substr($wlPath, strlen($currentPath) + 1)] = true;
                         }
                     }
-                    $childResult = filterRecursive($value, $childWl);
+                    $childResult = githubFilterRecursive($value, $childWl);
                     if (!empty($childResult)) {
                         $result[$key] = $childResult;
                     }
@@ -341,7 +341,7 @@ function filterWebhookPayload(array $data, array $whitelist, string $event): arr
                 }
             }
             if (!empty($childWl)) {
-                $childResult = filterRecursive($value, $childWl);
+                $childResult = githubFilterRecursive($value, $childWl);
                 if (!empty($childResult)) {
                     $result[$key] = $childResult;
                 }
@@ -355,7 +355,7 @@ function filterWebhookPayload(array $data, array $whitelist, string $event): arr
 /**
  * Recursively filter array with stripped whitelist (prefix already removed)
  */
-function filterRecursive(array $data, array $whitelist): array
+function githubFilterRecursive(array $data, array $whitelist): array
 {
     $result = [];
 
@@ -408,7 +408,7 @@ function filterRecursive(array $data, array $whitelist): array
                             $childWl[substr($wlPath, strlen($currentPath) + 1)] = true;
                         }
                     }
-                    $childResult = filterRecursive($value, $childWl);
+                    $childResult = githubFilterRecursive($value, $childWl);
                     if (!empty($childResult)) {
                         $result[$key] = $childResult;
                     }
@@ -424,7 +424,7 @@ function filterRecursive(array $data, array $whitelist): array
                 }
             }
             if (!empty($childWl)) {
-                $childResult = filterRecursive($value, $childWl);
+                $childResult = githubFilterRecursive($value, $childWl);
                 if (!empty($childResult)) {
                     $result[$key] = $childResult;
                 }

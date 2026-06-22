@@ -1,11 +1,18 @@
 parameters:
-	checkMissingIterableValueType: false
 	level: 6
 	bootstrapFiles:
 		- phpstan-bootstrap.php
 	paths:
 		- .
-	excludes_analyse:
+	excludePaths:
 		- vendor
 		- examples
 		- public
+	treatPhpDocTypesAsCertain: false
+	ignoreErrors:
+		- identifier: missingType.iterableValue
+		- identifier: missingType.generics
+		-
+			message: "~While loop condition is always true~"
+			path: scripts/github-code-review.php
+	reportUnmatchedIgnoredErrors: false

@@ -71,7 +71,7 @@ try {
             }
             // no break
         case 'push':
-            $Branch = isset($Message['ref']) && !is_null($Message['ref']) ? str_replace('refs/heads/', '', $Message['ref']) : '';
+            $Branch = isset($Message['ref']) && $Message['ref'] !== null ? str_replace('refs/heads/', '', $Message['ref']) : '';
             if (isset($Message['head_commit']['message'])) {
                 $CommitMsg = $Message['head_commit']['message'];
             } elseif (isset($Message['data']['issue']['title'])) {
