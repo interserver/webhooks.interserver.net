@@ -1,8 +1,18 @@
 {
+    "minimum-stability": "dev",
+    "prefer-stable": true,
     "require": {
         "php": ">=7.4",
         "predis/predis": "^2.0",
-        "vlucas/phpdotenv": "^5.5"
+        "vlucas/phpdotenv": "^5.5",
+        "symfony/console": "^7.4",
+        "sugarcraft/candy-input": "dev-master",
+        "sugarcraft/sugar-table": "dev-master",
+        "sugarcraft/sugar-dash": "dev-master",
+        "sugarcraft/candy-fuzzy": "dev-master",
+        "sugarcraft/sugar-toast": "dev-master",
+        "sugarcraft/sugar-bits": "dev-master",
+        "sugarcraft/candy-shine": "dev-master"
     },
     "require-dev": {
         "phpunit/phpunit": "^9.0",
@@ -11,6 +21,9 @@
     "autoload": {
         "classmap": ["src/"]
     },
+    "repositories": [
+        {"type": "composer", "url": "https://packagist.org", "canonical": true}
+    ],
     "scripts": {
         "test": "vendor/bin/phpunit",
         "analyse": "vendor/bin/phpstan analyse",

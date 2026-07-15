@@ -114,6 +114,30 @@ function verbose_raw(string $label, string $output): void
 }
 
 /**
+ * Render and log markdown with ANSI colors using candy-shine (only at -vvvv level)
+ */
+function verbose_markdown(string $label, string $markdown): void
+{
+    global $verbose, $logFile;
+    if ($verbose >= 4) {
+        $prefix = '[MD]';
+        $line = "github-code-review: {$prefix} {$label}";
+        error_log($line);
+        try {
+            $colored = \SugarCraft\Shine\Renderer::renderMarkdown($markdown);
+            error_log($colored);
+        } catch (\Throwable $e) {
+            // Fallback to plain text if rendering fails
+            error_log($markdown);
+        }
+        if ($logFile !== null) {
+            $timestamp = date('Y-m-d H:i:s.') . sprintf('%06d', (microtime(true) - floor(microtime(true))) * 1000000);
+            file_put_contents($logFile, "[{$timestamp}] {$line}\n[{$timestamp}] {$markdown}\n", FILE_APPEND);
+        }
+    }
+}
+
+/**
  * Look up a PR ref (head or base branch) via GitHub API with retry logic
  *
  * @param string $repo Owner/repo format
@@ -815,7 +839,10 @@ function runCommandWithTimeout(string $cmd, int $timeoutSecs = 30): array
 /**
  * Parse opencode improve output to extract fixed content
  *
- * @param string $rawOutput Raw JSON/text output from opencode
+ * Opencode outputs NDJSON format - each line is a separate JSON object.
+ * Fixed content may be in JSON code blocks within text events.
+ *
+ * @param string $rawOutput Raw NDJSON output from opencode
  * @param string $file File path
  * @param string $originalContent Original file content
  * @return array{success: bool, content: string|null}
@@ -827,53 +854,92 @@ function parseImproveOutput(string $rawOutput, string $file, string $originalCon
     }
 
     $data = json_decode($rawOutput, true);
-    if (!is_array($data)) {
-        // Try to extract JSON from output
-        if (preg_match('/\{.*\}/s', $rawOutput, $matches)) {
-            $data = json_decode($matches[0], true);
+    if (is_array($data)) {
+        $result = extractFixedContent($data, $file);
+        if ($result !== null) {
+            return ['success' => true, 'content' => $result];
         }
     }
 
-    if (!is_array($data)) {
-        return ['success' => false, 'content' => null];
-    }
+    $fullText = '';
+    $lines = explode("\n", $rawOutput);
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
 
-    // Look for fixed file content in various output structures
-    // Pattern 1: data.files[filename].content
-    if (isset($data['files'][$file]['content'])) {
-        return ['success' => true, 'content' => $data['files'][$file]['content']];
-    }
+        $event = json_decode($line, true);
+        if (!is_array($event)) {
+            continue;
+        }
 
-    // Pattern 2: data[filename] = fixed content string
-    if (isset($data[$file]) && is_string($data[$file])) {
-        return ['success' => true, 'content' => $data[$file]];
-    }
+        if (($event['type'] ?? '') === 'text') {
+            $text = $event['part']['text'] ?? '';
+            $fullText .= $text . "\n";
 
-    // Pattern 3: data.content = the fixed content
-    if (isset($data['content']) && is_string($data['content'])) {
-        return ['success' => true, 'content' => $data['content']];
-    }
+            if (preg_match('/```(?:json|php)?\s*(\{[\s\S]*?\})\s*```/', $text, $matches)) {
+                $json = json_decode($matches[1], true);
+                if (is_array($json)) {
+                    $result = extractFixedContent($json, $file);
+                    if ($result !== null) {
+                        return ['success' => true, 'content' => $result];
+                    }
+                }
+            }
 
-    // Pattern 4: data.fixes[] array with file+content
-    if (isset($data['fixes']) && is_array($data['fixes'])) {
-        foreach ($data['fixes'] as $fix) {
-            if (($fix['file'] ?? '') === $file && isset($fix['content'])) {
-                return ['success' => true, 'content' => $fix['content']];
+            if (preg_match('/```(?:php)?\s*(<\?php[\s\S]*?)\s*```/', $text, $matches)) {
+                return ['success' => true, 'content' => $matches[1]];
             }
         }
     }
 
-    // Pattern 5: data.improved[filename]
-    if (isset($data['improved'][$file])) {
-        return ['success' => true, 'content' => $data['improved'][$file]];
-    }
-
-    // Pattern 6: data.diff - individual patch
-    if (isset($data['diff']) && is_string($data['diff'])) {
-        return ['success' => true, 'content' => $data['diff']];
+    if ($fullText !== '') {
+        if (preg_match('/```php\s*(<\?php[\s\S]+?)\s*```/i', $fullText, $matches)) {
+            return ['success' => true, 'content' => $matches[1]];
+        }
+        if (preg_match('/```\s*(<\?php[\s\S]+?)\s*```/i', $fullText, $matches)) {
+            return ['success' => true, 'content' => $matches[1]];
+        }
     }
 
     return ['success' => false, 'content' => null];
+}
+
+/**
+ * Extract fixed content from parsed JSON structure
+ */
+function extractFixedContent(array $data, string $file): ?string
+{
+    if (isset($data['files'][$file]['content'])) {
+        return $data['files'][$file]['content'];
+    }
+
+    if (isset($data[$file]) && is_string($data[$file])) {
+        return $data[$file];
+    }
+
+    if (isset($data['content']) && is_string($data['content'])) {
+        return $data['content'];
+    }
+
+    if (isset($data['fixes']) && is_array($data['fixes'])) {
+        foreach ($data['fixes'] as $fix) {
+            if (($fix['file'] ?? '') === $file && isset($fix['content'])) {
+                return $fix['content'];
+            }
+        }
+    }
+
+    if (isset($data['improved'][$file])) {
+        return $data['improved'][$file];
+    }
+
+    if (isset($data['diff']) && is_string($data['diff'])) {
+        return $data['diff'];
+    }
+
+    return null;
 }
 
 /**
@@ -1153,7 +1219,7 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate): s
 
     // At level 4 (RAW), log the full opencode output for debugging
     if (strlen($result) > 0) {
-        verbose_raw("opencode_output", $result);
+        verbose_markdown("opencode_output", $result);
     }
 
     return $result;
@@ -1163,19 +1229,23 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate): s
  * Parse opencode JSON output into structured issues
  *
  * Opencode outputs JSON Lines (NDJSON) format - each line is a separate JSON object.
- * The actual issues are embedded in 'text' events, wrapped in markdown code blocks.
+ * The AI produces markdown code review reports (not JSON) with emoji-prefixed issues:
+ *   🔴 Critical | 🟠 Major | 🟡 Minor | 🟢 Nitpick
+ *   e.g., "#### 🔴 SQL Injection Vulnerability — include/file.php:207"
+ *
+ * Also supports JSON code blocks for backward compatibility.
  */
 function parseAnalysisOutput(string $rawOutput): array
 {
     $issues = [];
 
     if ($rawOutput === '') {
-        return $issues;  // No output = no issues (not an error)
+        return $issues;
     }
 
     $hadValidParse = false;
+    $fullText = '';
 
-    // Split by lines and parse each as JSON (JSON Lines format)
     $lines = explode("\n", $rawOutput);
     foreach ($lines as $line) {
         $line = trim($line);
@@ -1188,34 +1258,149 @@ function parseAnalysisOutput(string $rawOutput): array
             continue;
         }
 
-        // Look for text events that might contain JSON in code blocks
         if (($event['type'] ?? '') === 'text') {
             $text = $event['part']['text'] ?? '';
-            // Extract JSON from markdown code blocks
+            $fullText .= $text . "\n";
+
             if (preg_match('/```json\s*(\[[\s\S]*?\]|\{[\s\S]*?\})\s*```/', $text, $matches)) {
                 $json = json_decode($matches[1], true);
                 if (is_array($json)) {
                     $hadValidParse = true;
-                    // If it's an array of issues, merge them
                     if (isset($json[0]) && is_array($json[0])) {
                         foreach ($json as $issue) {
                             if (is_array($issue) && (isset($issue['severity']) || isset($issue['line']) || isset($issue['message']))) {
-                                $issues[] = $issue;
+                                $issues[] = normalizeIssue($issue);
                             }
                         }
                     } elseif (isset($json['file']) || isset($json['line'])) {
-                        // Single issue object
-                        $issues[] = $json;
+                        $issues[] = normalizeIssue($json);
                     }
                 }
             }
         }
     }
 
+    if (!$hadValidParse && $fullText !== '') {
+        $issues = array_merge($issues, parseMarkdownIssues($fullText));
+        if (!empty($issues)) {
+            $hadValidParse = true;
+        }
+    }
+
     if (!$hadValidParse) {
-        verbose_log('failed to parse opencode output - no valid JSON found in output', 1);
+        verbose_log('failed to parse opencode output - no valid JSON or markdown issues found', 1);
     } elseif (empty($issues)) {
         verbose_log('opencode output parsed but no issues found', 3);
+    }
+
+    return $issues;
+}
+
+/**
+ * Normalize issue array to ensure consistent field names
+ */
+function normalizeIssue(array $issue): array
+{
+    $normalized = [
+        'file' => $issue['file'] ?? $issue['path'] ?? '',
+        'line' => isset($issue['line']) ? (int)$issue['line'] : ($issue['line_number'] ?? 0),
+        'severity' => $issue['severity'] ?? 'warning',
+        'message' => $issue['message'] ?? $issue['description'] ?? '',
+    ];
+
+    $sev = strtolower($normalized['severity']);
+    if (in_array($sev, ['critical', 'crit', 'blocker', 'error'], true)) {
+        $normalized['severity'] = 'critical';
+    } elseif (in_array($sev, ['major', 'error'], true)) {
+        $normalized['severity'] = 'major';
+    } elseif (in_array($sev, ['minor', 'warning', 'warn'], true)) {
+        $normalized['severity'] = 'minor';
+    } elseif (in_array($sev, ['nitpick', 'info', 'suggestion', 'note'], true)) {
+        $normalized['severity'] = 'info';
+    }
+
+    return $normalized;
+}
+
+/**
+ * Parse issues from markdown code review format
+ *
+ * Extracts issues from markdown like:
+ *   #### 🔴 SQL Injection Vulnerability — include/file.php:207
+ *   #### 🟠 Missing Error Handling — include/file.php:42
+ *   #### 🟡 Code Style Issue — include/file.php:100
+ */
+function parseMarkdownIssues(string $text): array
+{
+    $issues = [];
+    $severityMap = [
+        '🔴' => 'critical',
+        '🟠' => 'major',
+        '🟡' => 'minor',
+        '🟢' => 'info',
+    ];
+
+    $lines = explode("\n", $text);
+    $currentIssue = null;
+    $currentDescription = [];
+
+    foreach ($lines as $line) {
+        $line = rtrim($line);
+        if ($line === '') {
+            if ($currentIssue !== null && !empty($currentDescription)) {
+                $currentIssue['message'] = trim(implode("\n", $currentDescription));
+                if ($currentIssue['message'] !== '') {
+                    $issues[] = $currentIssue;
+                }
+                $currentIssue = null;
+                $currentDescription = [];
+            }
+            continue;
+        }
+
+        if (preg_match('/^#{1,6}\s*([🔴🟠🟡🟢])\s+(.+?)(?:[\s—–-]+([^:\s]+):(\d+))?$/', $line, $matches)) {
+            if ($currentIssue !== null && !empty($currentDescription)) {
+                $currentIssue['message'] = trim(implode("\n", $currentDescription));
+                if ($currentIssue['message'] !== '') {
+                    $issues[] = $currentIssue;
+                }
+            }
+
+            $emoji = $matches[1];
+            $title = trim($matches[2]);
+            $file = $matches[3] ?? '';
+            $lineNum = isset($matches[4]) ? (int)$matches[4] : 0;
+
+            $currentIssue = [
+                'file' => $file,
+                'line' => $lineNum,
+                'severity' => $severityMap[$emoji] ?? 'minor',
+                'message' => $title,
+                'title' => $title,
+            ];
+            $currentDescription = [];
+        } elseif ($currentIssue !== null) {
+            if (preg_match('/^#{1,6}\s+[^🔴🟠🟡🟢]/', $line)) {
+                $currentIssue['message'] = trim(implode("\n", $currentDescription));
+                if ($currentIssue['message'] !== '') {
+                    $issues[] = $currentIssue;
+                }
+                $currentIssue = null;
+                $currentDescription = [];
+            } else {
+                $cleanLine = ltrim($line, ' `-*');
+                if ($cleanLine !== '' && !preg_match('/^\*\*[A-Z][a-z]+ [A-Z][a-z]+ \*\*$/', $cleanLine)) {
+                    $currentDescription[] = $cleanLine;
+                }
+            }
+        }
+    }
+
+    if ($currentIssue !== null && !empty($currentDescription)) {
+        $currentIssue['message'] = trim(implode("\n", $currentDescription));
+        if ($currentIssue['message'] !== '') {
+            $issues[] = $currentIssue;
+        }
     }
 
     return $issues;
