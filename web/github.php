@@ -53,6 +53,62 @@ function buildWebhookWhitelist(array $categories): array
 }
 
 /**
+ * Verify that the base branch exists in the repository, correct if not
+ *
+ * Uses `gh api repos/{owner}/{repo}/branches/{branch}` to verify existence.
+ * If the branch doesn't exist, falls back to the repository's default branch.
+ *
+ * @param string $repo Owner/repo format
+ * @param string $baseBranch The branch to verify
+ * @return string The verified correct base branch
+ */
+function verifyAndCorrectBaseBranch(string $repo, string $baseBranch): string
+{
+    if ($baseBranch === '') {
+        return 'main';
+    }
+
+    // Quick check: if branch is main/master/develop, just return it
+    // These are common enough that we skip the API call
+    if (in_array($baseBranch, ['main', 'master', 'develop', 'dev', 'staging'], true)) {
+        return $baseBranch;
+    }
+
+    // Verify the branch exists via GitHub API
+    $output = [];
+    $ret = 0;
+    $cmd = sprintf(
+        'gh api repos/%s/branches/%s --jq .name 2>&1',
+        escapeshellarg($repo),
+        escapeshellarg($baseBranch)
+    );
+    exec($cmd, $output, $ret);
+
+    if ($ret === 0 && !empty($output)) {
+        // Branch exists, return as-is
+        return $baseBranch;
+    }
+
+    // Branch doesn't exist - get the default branch
+    $defaultOutput = [];
+    $defaultRet = 0;
+    $defaultCmd = sprintf(
+        'gh api repos/%s --jq .default_branch 2>&1',
+        escapeshellarg($repo)
+    );
+    exec($defaultCmd, $defaultOutput, $defaultRet);
+
+    if ($defaultRet === 0 && !empty($defaultOutput)) {
+        $defaultBranch = trim(implode("\n", $defaultOutput));
+        error_log("github-webhook: base_branch '{$baseBranch}' not found, using default branch '{$defaultBranch}'");
+        return $defaultBranch ?: 'main';
+    }
+
+    // Couldn't determine, return original (might work anyway if gh caches it)
+    return $baseBranch;
+}
+
+/**
  * Add universal repository fields to whitelist for a specific event
  */
 function addUniversalRepoFields(array $whitelist): array
@@ -148,16 +204,25 @@ try {
     if ($EventType === 'pull_request' && in_array($action, ['opened', 'synchronize'], true)) {
         $pr = $Payload['pull_request'] ?? [];
         $author = $pr['user'] ?? [];
+        $authorLogin = $author['login'] ?? '';
+        $isBot = str_ends_with($authorLogin, '[bot]');
+
+        // Verify the base branch actually exists in the repo
+        // If the stored base_branch doesn't exist, use the repo's default branch
+        $storedBaseBranch = $pr['base']['ref'] ?? '';
+        $baseBranch = verifyAndCorrectBaseBranch($RepositoryName, $storedBaseBranch);
+
         CodeReviewQueue::enqueue([
             'repo' => $RepositoryName,
             'pr_number' => (int)($pr['number'] ?? 0),
             'action' => $action,
             'head_branch' => $pr['head']['ref'] ?? '',
-            'base_branch' => $pr['base']['ref'] ?? '',
+            'base_branch' => $baseBranch,
             'pr_url' => $pr['html_url'] ?? '',
-            'author' => $author['login'] ?? '',
+            'author' => $authorLogin,
             'author_url' => $author['html_url'] ?? '',
             'sha' => $pr['head']['sha'] ?? '',
+            'is_bot' => $isBot,
         ]);
     }
 
