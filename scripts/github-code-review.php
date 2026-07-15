@@ -38,43 +38,78 @@ if (file_exists($envFile)) {
 // === Verbose Logging ===
 $verbose = 0;
 $running = true;
+$logFile = null;
 $optind = 0;
-$args = getopt('vhwb', ['verbose', 'help', 'wait-if-empty', 'review-bots'], $optind);
+$args = getopt('vhwb', ['verbose', 'help', 'wait-if-empty', 'review-bots', 'log::'], $optind);
 if (isset($args['h']) || isset($args['help'])) {
-    fwrite(STDOUT, "Usage: php scripts/github-code-review.php [-v|--verbose]... [-w|--wait-if-empty] [-b|--review-bots]\n");
-    fwrite(STDOUT, "  -v, --verbose      Increase verbosity (can stack: -vv, -vvv)\n");
+    fwrite(STDOUT, "Usage: php scripts/github-code-review.php [-v|--verbose]... [-w|--wait-if-empty] [-b|--review-bots] [--log=FILE]\n");
+    fwrite(STDOUT, "  -v, --verbose      Increase verbosity (can stack: -vv, -vvv, -vvvv)\n");
+    fwrite(STDOUT, "    -v   [INFO]     Essential progress (job start/complete/errors)\n");
+    fwrite(STDOUT, "    -vv  [DEBUG]    Detailed progress (checkpoints, function entry)\n");
+    fwrite(STDOUT, "    -vvv [TRACE]    Full trace (loop iterations, gh commands)\n");
+    fwrite(STDOUT, "    -vvvv [RAW]     Everything: raw gh output, API responses, full command output\n");
     fwrite(STDOUT, "  -w, --wait-if-empty  Wait for jobs when queue is empty (default: exit)\n");
     fwrite(STDOUT, "  -b, --review-bots    Also review PRs from bots like dependabot (default: skip)\n");
+    fwrite(STDOUT, "  --log=FILE            Append all log output to FILE (in addition to stderr)\n");
     fwrite(STDOUT, "  -h, --help        Show this help message\n");
     fwrite(STDOUT, "\n  Press Ctrl-C to exit gracefully at any time.\n");
     exit(0);
 }
 if (isset($args['v'])) {
-    $verbose = min(3, $verbose + count((array)$args['v']));
+    $verbose = min(4, $verbose + count((array)$args['v']));
 }
 if (isset($args['verbose'])) {
-    $verbose = min(3, $verbose + count((array)$args['verbose']));
+    $verbose = min(4, $verbose + count((array)$args['verbose']));
 }
 $waitIfEmpty = isset($args['w']) || isset($args['wait-if-empty']);
 $reviewBots = isset($args['b']) || isset($args['review-bots']);
+if (isset($args['log'])) {
+    $logFile = $args['log'] !== false ? $args['log'] : 'github-code-review.log';
+}
 
 /**
  * Emit verbose log message at the specified verbosity level.
  *
  * @param string $message Log message
- * @param int $level Verbosity level (1=INFO, 2=DEBUG, 3=TRACE)
+ * @param int $level Verbosity level (1=INFO, 2=DEBUG, 3=TRACE, 4=RAW)
  */
 function verbose_log(string $message, int $level = 1): void
 {
-    global $verbose;
+    global $verbose, $logFile;
     if ($verbose >= $level) {
         $prefix = match ($level) {
             1 => '[INFO]',
             2 => '[DEBUG]',
             3 => '[TRACE]',
+            4 => '[RAW]',
             default => '[VERBOSE]'
         };
-        error_log("github-code-review: {$prefix} {$message}");
+        $line = "github-code-review: {$prefix} {$message}";
+        error_log($line);
+        if ($logFile !== null) {
+            $timestamp = date('Y-m-d H:i:s.') . sprintf('%06d', (microtime(true) - floor(microtime(true))) * 1000000);
+            file_put_contents($logFile, "[{$timestamp}] {$line}\n", FILE_APPEND);
+        }
+    }
+}
+
+/**
+ * Log raw command output (only at -vvvv level)
+ */
+function verbose_raw(string $label, string $output): void
+{
+    global $verbose, $logFile;
+    if ($verbose >= 4) {
+        $prefix = '[RAW]';
+        $line = "github-code-review: {$prefix} {$label}";
+        error_log($line);
+        error_log("--- BEGIN {$label} ---");
+        error_log($output);
+        error_log("--- END {$label} ---");
+        if ($logFile !== null) {
+            $timestamp = date('Y-m-d H:i:s.') . sprintf('%06d', (microtime(true) - floor(microtime(true))) * 1000000);
+            file_put_contents($logFile, "[{$timestamp}] {$line}\n[{$timestamp}] --- BEGIN {$label} ---\n{$output}\n[{$timestamp}] --- END {$label} ---\n", FILE_APPEND);
+        }
     }
 }
 
@@ -102,6 +137,10 @@ function getPRRef(string $repo, int $prNumber, string $refType): ?string
             $refType
         );
         exec($cmd, $output, $ret);
+
+        // At level 4, log the raw gh api output
+        $rawOutput = implode("\n", $output);
+        verbose_raw("gh_api_{$refType}", "cmd: {$cmd}\noutput: {$rawOutput}\nret: {$ret}");
 
         if ($ret === 0 && !empty($output)) {
             $ref = trim(implode("\n", $output));
@@ -992,6 +1031,9 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
 
     exec($cloneCmd, $cloneOutput, $cloneRet);
 
+    // At level 4, log the raw clone output
+    verbose_raw("gh_clone_attempt1", "cmd: {$cloneCmd}\noutput: " . implode("\n", $cloneOutput) . "\nret: {$cloneRet}");
+
     // After exec returns, check if signal arrived during exec
     // @phpstan-ignore-next-line
     if (!$running) {
@@ -1022,6 +1064,9 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
             escapeshellarg($branch)
         );
         exec($cloneCmd, $cloneOutput, $cloneRet);
+
+        // At level 4, log the raw clone output
+        verbose_raw("gh_clone_attempt2", "cmd: {$cloneCmd}\noutput: " . implode("\n", $cloneOutput) . "\nret: {$cloneRet}");
 
         // After exec returns, check if signal arrived during exec
         // @phpstan-ignore-next-line
@@ -1085,10 +1130,16 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate): s
     }
 
     // Build command: opencode analyzes the working directory's changes
+    // Write prompt to temp file to avoid shell quoting issues with special chars
+    // (parentheses, quotes, $, `, etc. in the prompt break sh -c quoting)
+    $promptFile = '/tmp/opencode-prompt-' . $jobId . '.txt';
+    file_put_contents($promptFile, $reviewPrompt);
+
+    // Use bash -c with $(cat ...) to read prompt from file - avoids all escaping issues
     $opencodeCmd = sprintf(
-        'sh -c "cd %s && git diff --name-only && git diff && opencode run %s --format json" 2>&1',
+        'bash -c \'cd %s && git diff --name-only && git diff && opencode run "$(cat %s)" --format json\' 2>&1',
         escapeshellarg($dir),
-        escapeshellarg($reviewPrompt)
+        escapeshellarg($promptFile)
     );
 
     verbose_log("runOpencodeAnalysis: executing analysis in {$dir}", 3);
@@ -1100,9 +1151,9 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate): s
     $result = implode("\n", $output);
     verbose_log("runOpencodeAnalysis: completed, output length=" . strlen($result), 3);
 
-    // Debug: log full raw output when parsing will likely fail
+    // At level 4 (RAW), log the full opencode output for debugging
     if (strlen($result) > 0) {
-        verbose_log("RAW_OUTPUT_START\n" . substr($result, 0, 8000) . "\nRAW_OUTPUT_END", 2);
+        verbose_raw("opencode_output", $result);
     }
 
     return $result;
