@@ -1292,6 +1292,14 @@ function handleFailure(array $job, string $reason): void
     // Generate new UUID for requeued job to avoid deduplication issues
     $job['id'] = CodeReviewQueue::uuidV4();
 
+    // Before requeueing, verify base_branch is correct to avoid repeated fallback lookups
+    $storedBase = $job['base_branch'] ?? '';
+    $correctBase = getPRRef($job['repo'] ?? '', (int)($job['pr_number'] ?? 0), 'base');
+    if ($correctBase !== null && $correctBase !== $storedBase) {
+        verbose_log("correcting base_branch from '{$storedBase}' to '{$correctBase}' before requeue", 2);
+        $job['base_branch'] = $correctBase;
+    }
+
     error_log("github-code-review: requeueing job {$job['id']} (retry {$retryCount}/" . MAX_RETRIES . "): {$reason}");
     CodeReviewQueue::requeue($job);
 }
