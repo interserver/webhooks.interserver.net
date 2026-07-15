@@ -14,7 +14,12 @@ declare(strict_types=1);
  *      c. Post a PR comment with the issue + inline diff
  *
  * Usage:
- *   php scripts/github-code-review.php
+ *   php scripts/github-code-review.php [-v|--verbose]...
+ *
+ * Verbose levels:
+ *   -v   [INFO]   Essential progress (job start/complete/errors)
+ *   -vv  [DEBUG]  Detailed progress (checkpoints, function entry)
+ *   -vvv [TRACE]  Full trace (loop iterations, issue details)
  *
  * Run as a systemd service or cron loop:
  *   while true; do php scripts/github-code-review.php; sleep 1; done
@@ -30,22 +35,130 @@ if (file_exists($envFile)) {
     $dotenv->load();
 }
 
+// === Verbose Logging ===
+$verbose = 0;
+$running = true;
+$optind = 0;
+$args = getopt('vhwb', ['verbose', 'help', 'wait-if-empty', 'review-bots'], $optind);
+if (isset($args['h']) || isset($args['help'])) {
+    fwrite(STDOUT, "Usage: php scripts/github-code-review.php [-v|--verbose]... [-w|--wait-if-empty] [-b|--review-bots]\n");
+    fwrite(STDOUT, "  -v, --verbose      Increase verbosity (can stack: -vv, -vvv)\n");
+    fwrite(STDOUT, "  -w, --wait-if-empty  Wait for jobs when queue is empty (default: exit)\n");
+    fwrite(STDOUT, "  -b, --review-bots    Also review PRs from bots like dependabot (default: skip)\n");
+    fwrite(STDOUT, "  -h, --help        Show this help message\n");
+    fwrite(STDOUT, "\n  Press Ctrl-C to exit gracefully at any time.\n");
+    exit(0);
+}
+if (isset($args['v'])) {
+    $verbose = min(3, $verbose + count((array)$args['v']));
+}
+if (isset($args['verbose'])) {
+    $verbose = min(3, $verbose + count((array)$args['verbose']));
+}
+$waitIfEmpty = isset($args['w']) || isset($args['wait-if-empty']);
+$reviewBots = isset($args['b']) || isset($args['review-bots']);
+
+/**
+ * Emit verbose log message at the specified verbosity level.
+ *
+ * @param string $message Log message
+ * @param int $level Verbosity level (1=INFO, 2=DEBUG, 3=TRACE)
+ */
+function verbose_log(string $message, int $level = 1): void
+{
+    global $verbose;
+    if ($verbose >= $level) {
+        $prefix = match ($level) {
+            1 => '[INFO]',
+            2 => '[DEBUG]',
+            3 => '[TRACE]',
+            default => '[VERBOSE]'
+        };
+        error_log("github-code-review: {$prefix} {$message}");
+    }
+}
+
+/**
+ * Look up the actual head branch name for a PR via GitHub API
+ *
+ * @param string $repo Owner/repo format
+ * @param int $prNumber PR number
+ * @return string|null The head branch name, or null on failure
+ */
+function getPRHeadBranch(string $repo, int $prNumber): ?string
+{
+    $output = [];
+    $ret = 0;
+    $cmd = sprintf('gh api repos/%s/pulls/%d --jq .head.ref 2>&1', escapeshellarg($repo), $prNumber);
+    exec($cmd, $output, $ret);
+    if ($ret !== 0 || empty($output)) {
+        return null;
+    }
+    $branch = trim(implode("\n", $output));
+    return $branch ?: null;
+}
+
+/**
+ * Look up the actual base branch name for a PR via GitHub API
+ *
+ * @param string $repo Owner/repo format
+ * @param int $prNumber PR number
+ * @return string|null The base branch name (where PR is merging into), or null on failure
+ */
+function getPRBaseBranch(string $repo, int $prNumber): ?string
+{
+    $output = [];
+    $ret = 0;
+    $cmd = sprintf('gh api repos/%s/pulls/%d --jq .base.ref 2>&1', escapeshellarg($repo), $prNumber);
+    exec($cmd, $output, $ret);
+    if ($ret !== 0 || empty($output)) {
+        return null;
+    }
+    $branch = trim(implode("\n", $output));
+    return $branch ?: null;
+}
+
 // === Configuration ===
 const GITHUB_TOKEN = 'GITHUB_TOKEN';
 const CHECKOUT_ROOT = 'CHECKOUT_ROOT';
 const OPENCODE_ANALYZE_CMD = 'OPENCODE_ANALYZE_CMD';
 const OPENCODE_IMPROVE_CMD = 'OPENCODE_IMPROVE_CMD';
 const MAX_RETRIES = 3;
-const WORKER_TIMEOUT = 60; // seconds to wait on queue per iteration
+const WORKER_TIMEOUT = 180; // seconds to wait for analysis per job (bigger repos need more time)
 
 $githubToken = getenv(GITHUB_TOKEN) ?: '';
+$ghToken = getenv('GH_TOKEN') ?: '';
 $checkoutRoot = getenv(CHECKOUT_ROOT) ?: '/tmp/pr-checkouts';
-$opencodeAnalyzeCmd = getenv(OPENCODE_ANALYZE_CMD) ?: 'opencode analyze --dir {dir} --output json 2>/dev/null';
-$opencodeImproveCmd = getenv(OPENCODE_IMPROVE_CMD) ?: 'opencode improve --dir {dir} --output json 2>/dev/null';
+$opencodeAnalyzeCmd = getenv(OPENCODE_ANALYZE_CMD) ?: 'sh -c "cd {dir} && opencode run \"Analyze all PHP files in this directory tree. Find issues and return JSON array with fields: file, line, severity (error/warning/info), message for each issue\" --format json" 2>&1';
+$opencodeImproveCmd = getenv(OPENCODE_IMPROVE_CMD) ?: 'sh -c "cd {dir} && opencode run \"Fix the PHP issue at line {line} in {file}\" --format json" 2>&1';
 
-if ($githubToken === '') {
-    error_log('github-code-review: GITHUB_TOKEN not set, exiting');
+// Check if logged into gh
+$authStatus = (string)shell_exec('gh auth status 2>&1');
+if (strpos($authStatus, 'authenticated') === false && strpos($authStatus, 'Logged in') === false) {
+    error_log('github-code-review: Not logged into gh. Run "gh auth login" first.');
     exit(1);
+}
+
+// Pass tokens to child processes if set
+if ($githubToken !== '') {
+    putenv("GITHUB_TOKEN={$githubToken}");
+}
+if ($ghToken !== '') {
+    putenv("GH_TOKEN={$ghToken}");
+}
+
+// === Signal Handling ===
+if (function_exists('pcntl_signal')) {
+    pcntl_signal(SIGINT, function () {
+        global $running;
+        $running = false;
+        verbose_log("received SIGINT, shutting down...", 1);
+    });
+    pcntl_signal(SIGTERM, function () {
+        global $running;
+        $running = false;
+        verbose_log("received SIGTERM, shutting down...", 1);
+    });
 }
 
 /**
@@ -53,38 +166,95 @@ if ($githubToken === '') {
  */
 function main(): void
 {
-    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $opencodeImproveCmd;
+    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $opencodeImproveCmd, $verbose, $waitIfEmpty, $reviewBots, $running;
 
-    error_log('github-code-review: worker started');
+    verbose_log("worker started (verbose level {$verbose})", 1);
+    verbose_log('waitIfEmpty=' . ($waitIfEmpty ? 'true' : 'false') . ' - ' . ($waitIfEmpty ? 'will wait for jobs' : 'will exit when queue empty'), 1);
+    verbose_log('reviewBots=' . ($reviewBots ? 'true' : 'false') . ' - ' . ($reviewBots ? 'will review bot PRs' : 'will skip bot PRs'), 1);
 
+    $iteration = 0;
     while (true) {
-        $job = CodeReviewQueue::dequeue(WORKER_TIMEOUT);
+        $iteration++;
+        verbose_log("main loop iteration #{$iteration} - fetching job", 3);
+
+        // When waitIfEmpty=false, use non-blocking dequeue (timeout=0)
+        // When waitIfEmpty=true, use blocking dequeue with WORKER_TIMEOUT
+        $timeout = $waitIfEmpty ? WORKER_TIMEOUT : 0;
+        $job = CodeReviewQueue::dequeue($timeout);
 
         if ($job === null) {
-            // Timeout or error, loop and try again
+            if (!$waitIfEmpty) {
+                verbose_log("queue empty, exiting", 1);
+                break;
+            }
+            verbose_log("queue empty, waiting for jobs...", 1);
+            usleep(500000); // sleep 0.5s
+            if (function_exists('pcntl_signal_dispatch')) {
+                pcntl_signal_dispatch();
+            }
+            if (!$running) {
+                verbose_log("shutdown requested, exiting", 1);
+                break;
+            }
             continue;
         }
 
         $jobId = $job['id'] ?? 'unknown';
-        error_log("github-code-review: processing job {$jobId} for {$job['repo']}#{$job['pr_number']}");
+        $repo = $job['repo'] ?? 'unknown';
+        $prNumber = $job['pr_number'] ?? 'unknown';
+        $branch = $job['head_branch'] ?? 'unknown';
+
+        // If branch is "HEAD", look up the actual branch name from GitHub API
+        if ($branch === 'HEAD' || $branch === 'unknown') {
+            $actualBranch = getPRHeadBranch($repo, (int)$prNumber);
+            if ($actualBranch) {
+                verbose_log("resolved HEAD to actual branch: {$actualBranch}", 2);
+                $branch = $actualBranch;
+                $job['head_branch'] = $branch; // Update for processJob
+            } else {
+                verbose_log("could not resolve HEAD branch, using 'main'", 2);
+                $branch = 'main';
+                $job['head_branch'] = $branch;
+            }
+        }
+
+        verbose_log("dequeued job {$jobId}: repo={$repo} pr={$prNumber} branch={$branch}", 2);
+        verbose_log("processing job {$jobId} for {$repo}#{$prNumber}", 1);
 
         try {
             $result = processJob($job);
             if ($result === 'true') {
-                error_log("github-code-review: completed job {$jobId}");
+                verbose_log("completed job {$jobId}", 1);
             } elseif (is_string($result) && str_starts_with($result, 'no_issues')) {
-                error_log("github-code-review: no issues found for {$job['repo']}#{$job['pr_number']}");
+                verbose_log("no issues found for {$repo}#{$prNumber}", 1);
+            } elseif ($result === 'shutdown') {
+                verbose_log("job {$jobId} shutdown requested, exiting", 1);
+                break;
             } else {
-                error_log("github-code-review: job {$jobId} failed: {$result}");
+                verbose_log("job {$jobId} failed: {$result}", 1);
                 handleFailure($job, $result);
             }
         } catch (\Throwable $e) {
-            error_log("github-code-review: job {$jobId} exception: {$e->getMessage()}");
+            verbose_log("job {$jobId} exception: {$e->getMessage()}", 1);
             handleFailure($job, $e->getMessage());
         }
 
+        // Check if shutdown was requested (Ctrl-C pressed during job)
+        if (!$running) {
+            verbose_log("shutdown requested, exiting", 1);
+            break;
+        }
+
         // Small delay between jobs to avoid hammering
+        verbose_log('sleeping 0.5s before next job', 3);
         usleep(500000); // 0.5s
+        if (function_exists('pcntl_signal_dispatch')) {
+            pcntl_signal_dispatch();
+        }
+        if (!$running) {
+            verbose_log("shutdown requested, exiting", 1);
+            break;
+        }
     }
 }
 
@@ -96,35 +266,106 @@ function main(): void
  */
 function processJob(array $job): string
 {
-    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $opencodeImproveCmd;
+    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $opencodeImproveCmd, $verbose, $reviewBots, $running;
+
+    // Check if shutdown was requested before starting work
+    if (!$running) {
+        verbose_log("shutdown requested, abandoning job", 2);
+        return 'shutdown';
+    }
 
     $repo = $job['repo'] ?? '';
     $prNumber = (int)($job['pr_number'] ?? 0);
+    $jobId = $job['id'] ?? uniqid('job_');
     $headBranch = $job['head_branch'] ?? '';
     $baseBranch = $job['base_branch'] ?? '';
     $prUrl = $job['pr_url'] ?? '';
     $author = $job['author'] ?? '';
+    $isBot = ($job['is_bot'] ?? false) || str_ends_with($author, '[bot]');
+    if ($isBot && !$reviewBots) {
+        verbose_log("skipping bot PR from {$author}", 1);
+        return 'skipped bot PR';
+    }
+
     $sha = $job['sha'] ?? '';
     $action = $job['action'] ?? '';
 
-    if ($repo === '' || $prNumber === 0 || $headBranch === '') {
+    if ($repo === '' || $prNumber === 0 || $baseBranch === '') {
         return 'invalid job: missing required fields';
     }
 
-    // Checkout the PR branch
+    // Step 1: Checkout the base branch (target branch - where PR is merging into)
     $checkoutPath = "{$checkoutRoot}/{$repo}/{$prNumber}";
-    $checkoutOk = checkoutBranch($repo, $headBranch, $checkoutPath);
-    if ($checkoutOk !== 'true') {
-        return 'checkout failed: ' . $checkoutOk;
+    verbose_log("starting checkout: repo={$repo} base_branch={$baseBranch} path={$checkoutPath}", 2);
+
+    $checkoutOk = checkoutBranch($repo, $baseBranch, $checkoutPath);
+    if ($checkoutOk === 'shutdown') {
+        verbose_log("shutdown during initial checkout, abandoning job", 2);
+        return 'shutdown';
     }
+    if ($checkoutOk !== 'true') {
+        // Check if shutdown was requested before fallback attempt
+        if (!$running) {
+            verbose_log("shutdown requested, abandoning job before fallback", 2);
+            return 'shutdown';
+        }
+        // Fallback: look up actual base branch from GitHub API and retry
+        verbose_log("base branch '{$baseBranch}' checkout failed, looking up actual base branch", 2);
+        // Check if shutdown was requested before API call
+        if (!$running) {
+            verbose_log("shutdown requested, abandoning job before base branch lookup", 2);
+            return 'shutdown';
+        }
+        $actualBaseBranch = getPRBaseBranch($repo, $prNumber);
+        if ($actualBaseBranch !== null && $actualBaseBranch !== $baseBranch) {
+            verbose_log("retrying with actual base branch: {$actualBaseBranch}", 2);
+            $checkoutOk = checkoutBranch($repo, $actualBaseBranch, $checkoutPath);
+            if ($checkoutOk === 'shutdown') {
+                verbose_log("shutdown during fallback checkout, abandoning job", 2);
+                return 'shutdown';
+            }
+        }
+        if ($checkoutOk !== 'true') {
+            verbose_log("checkout failed: {$checkoutOk}", 1);
+            return 'checkout failed: ' . $checkoutOk;
+        }
+        // Update baseBranch for later use (e.g., diff application)
+        $baseBranch = $actualBaseBranch;
+    }
+    verbose_log("checkout complete: base branch checked out", 2);
 
     try {
-        // Initialize git repo for diffs
+        // Step 2: Get the PR diff and apply it (files become modified/uncommitted)
+        $diff = getPRDiff($repo, $prNumber);
+        if ($diff !== null && $diff !== '') {
+            verbose_log("applying PR diff for {$repo}#{$prNumber}", 2);
+            $applyOk = applyPRDiff($checkoutPath, $diff);
+            if ($applyOk) {
+                verbose_log("PR diff applied successfully - files now modified", 2);
+            } else {
+                verbose_log("failed to apply PR diff - analyzing base branch only", 2);
+            }
+        } else {
+            verbose_log("no diff retrieved - analyzing base branch only", 2);
+        }
+
+        // Step 3: Initialize git repo and run opencode analysis on the modified working dir
         initGitRepo($checkoutPath);
 
-        // Run opencode analysis
-        $analysisOutput = runOpencodeAnalysis($checkoutPath, $opencodeAnalyzeCmd);
+        verbose_log("starting opencode analysis for {$repo}#{$prNumber} in {$checkoutPath}", 2);
+        $analysisOutput = runOpencodeAnalysis($checkoutPath, $jobId, $opencodeAnalyzeCmd);
+        verbose_log("analysis command completed", 3);
+
         $issues = parseAnalysisOutput($analysisOutput);
+        verbose_log("found " . count($issues) . " issues", 2);
+
+        // At DEBUG level, log the actual JSON issues found
+        if (!empty($issues) && $verbose >= 2) {
+            foreach ($issues as $issue) {
+                $issueJson = json_encode($issue, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                verbose_log("analysis result: {$issueJson}", 2);
+            }
+        }
 
         if (empty($issues)) {
             return 'no_issues';
@@ -134,17 +375,24 @@ function processJob(array $job): string
         $issuesFixed = 0;
 
         // Process each issue individually
-        foreach ($issues as $issue) {
+        foreach ($issues as $index => $issue) {
+            $file = $issue['file'] ?? $issue['path'] ?? 'unknown';
+            $line = $issue['line'] ?? $issue['line_number'] ?? 0;
+            $message = $issue['message'] ?? $issue['description'] ?? 'Issue';
+            verbose_log("processing issue #{$index}: file={$file} line={$line} message=" . substr($message, 0, 60), 3);
+
             $issueResult = processIssue($issue, $checkoutPath, $githubToken, $repo, $prNumber, $sha, $opencodeImproveCmd);
             if ($issueResult === true) {
                 $issuesFixed++;
+                verbose_log("posted fix for issue #{$index}", 3);
             }
             $issuesPosted++;
         }
 
-        error_log("github-code-review: posted {$issuesFixed}/{$issuesPosted} fixes for {$repo}#{$prNumber}");
+        verbose_log("completed processing: {$issuesFixed}/{$issuesPosted} fixes posted for {$repo}#{$prNumber}", 2);
     } finally {
         // Always clean up checkout
+        verbose_log("cleaning up checkout: {$checkoutPath}", 3);
         exec("rm -rf " . escapeshellarg($checkoutPath));
     }
 
@@ -172,18 +420,19 @@ function processIssue(array $issue, string $checkoutPath, string $token, string 
     $rule = $issue['rule'] ?? $issue['id'] ?? '';
 
     if ($file === '') {
-        error_log("github-code-review: skipping issue with no file");
+        verbose_log("skipping issue: no file specified", 2);
         return false;
     }
 
     // Save original file content for diff
     $originalFilePath = $checkoutPath . '/' . $file;
     if (!file_exists($originalFilePath)) {
-        error_log("github-code-review: file {$file} does not exist in checkout");
+        verbose_log("file {$file} does not exist in checkout, skipping", 2);
         return false;
     }
     $originalContent = file_get_contents($originalFilePath);
 
+    verbose_log("running opencode improve for {$file}:{$line}", 2);
     // Run opencode improve to generate a fix
     $improveOutput = runOpencodeImprove($checkoutPath, $file, $line, $improveCmd);
     $fixResult = parseImproveOutput($improveOutput, $file, $originalContent);
@@ -191,10 +440,18 @@ function processIssue(array $issue, string $checkoutPath, string $token, string 
     if (!$fixResult['success']) {
         // No fix available or failed to generate
         // Post issue without fix
+        verbose_log("no fix generated for {$file}:{$line}, posting issue without fix", 2);
         $commentBody = buildIssueComment($issue, null, $repo, $prNumber, false);
         $postResult = postPrComment($token, $repo, $prNumber, $commentBody);
+        if ($postResult === 'true') {
+            verbose_log("posted issue comment for {$file}:{$line}", 2);
+        } else {
+            verbose_log("failed to post issue comment: {$postResult}", 1);
+        }
         return $postResult === 'true';
     }
+
+    verbose_log("fix generated for {$file}:{$line}, applying and posting diff", 2);
 
     // Apply the fix to the file
     $fixedContent = $fixResult['content'];
@@ -209,8 +466,15 @@ function processIssue(array $issue, string $checkoutPath, string $token, string 
     // Build the comment with the diff
     $commentBody = buildIssueComment($issue, $diff, $repo, $prNumber, true);
 
+    verbose_log("posting diff comment for {$file}:{$line}", 2);
     // Post as a review comment (with line reference if possible)
     $postResult = postPrReviewComment($token, $repo, $prNumber, $commentBody, $sha, $file, $line);
+
+    if ($postResult === 'true') {
+        verbose_log("posted diff comment for {$file}:{$line}", 2);
+    } else {
+        verbose_log("failed to post diff comment: {$postResult}", 1);
+    }
 
     return $postResult === 'true';
 }
@@ -414,84 +678,135 @@ function getFileDiff(string $checkoutPath, string $file, string $originalContent
 }
 
 /**
- * Clone/fetch the repository and checkout the target branch
+ * Clone/fetch the repository and checkout the target branch using gh auth
  * @return string True on success, error message on failure
  */
 function checkoutBranch(string $repo, string $branch, string $checkoutPath): string
 {
-    $repoUrl = "https://github.com/{$repo}.git";
+    global $running;
+    verbose_log("checkoutBranch: repo={$repo} branch={$branch} path={$checkoutPath}", 3);
 
     // Create parent directory if needed
     $parentDir = dirname($checkoutPath);
     if (!is_dir($parentDir)) {
         @mkdir($parentDir, 0755, true);
+        verbose_log("created parent directory: {$parentDir}", 3);
     }
 
     // Remove existing checkout if present
     if (is_dir($checkoutPath)) {
+        verbose_log("removing existing checkout: {$checkoutPath}", 3);
         exec("rm -rf " . escapeshellarg($checkoutPath));
     }
 
-    // Clone with depth 1
+    // Use gh repo clone which automatically uses gh authentication
+    // Correct syntax: gh repo clone <repository> [<directory>] [-- <gitflags>...]
+    // Directory must come BEFORE '--', branch must come AFTER '--'
     $cloneCmd = sprintf(
-        'git clone --depth 1 --branch %s %s %s 2>&1',
-        escapeshellarg($branch),
-        escapeshellarg($repoUrl),
-        escapeshellarg($checkoutPath)
+        'gh repo clone %s %s -- --branch %s 2>&1',
+        escapeshellarg($repo),
+        escapeshellarg($checkoutPath),
+        escapeshellarg($branch)
     );
+
+    verbose_log("executing: {$cloneCmd}", 3);
 
     $cloneOutput = [];
     $cloneRet = 0;
     exec($cloneCmd, $cloneOutput, $cloneRet);
 
     if ($cloneRet !== 0) {
-        // Try without specifying branch
-        $fetchCmd = sprintf(
-            'git clone --depth 1 %s %s 2>&1',
-            escapeshellarg($repoUrl),
-            escapeshellarg($checkoutPath)
-        );
-        exec($fetchCmd, $fetchOutput, $fetchRet);
-
-        if ($fetchRet !== 0) {
-            return 'git clone failed: ' . implode("\n", $cloneOutput);
+        // Check if shutdown was requested before retrying
+        if (!$running) {
+            verbose_log("shutdown requested, abandoning checkout retry", 2);
+            return 'shutdown';
         }
-
-        // Try to checkout the branch
-        $checkoutCmd = sprintf(
-            'cd %s && git fetch origin %s && git checkout %s 2>&1',
+        verbose_log("first clone attempt failed, trying with --depth 1", 3);
+        // Clean up partial checkout before retry
+        if (is_dir($checkoutPath)) {
+            verbose_log("cleaning up partial checkout before retry: {$checkoutPath}", 3);
+            exec("rm -rf " . escapeshellarg($checkoutPath));
+        }
+        // Try with --depth 1 passed through to git (after --)
+        $cloneCmd = sprintf(
+            'gh repo clone %s %s -- --depth 1 --branch %s 2>&1',
+            escapeshellarg($repo),
             escapeshellarg($checkoutPath),
-            escapeshellarg($branch),
             escapeshellarg($branch)
         );
-        $checkoutOutput = [];
-        $checkoutRet = 0;
-        exec($checkoutCmd, $checkoutOutput, $checkoutRet);
+        exec($cloneCmd, $cloneOutput, $cloneRet);
 
-        if ($checkoutRet !== 0) {
-            return 'git checkout failed: ' . implode("\n", $checkoutOutput);
+        if ($cloneRet !== 0) {
+            // Check if shutdown was requested after retry failure
+            if (!$running) {
+                verbose_log("shutdown requested after retry failure", 2);
+                return 'shutdown';
+            }
+            $error = 'gh repo clone failed: ' . implode("\n", $cloneOutput);
+            verbose_log("checkoutBranch FAILED: {$error}", 1);
+            return $error;
         }
     }
 
+    verbose_log("checkoutBranch: success", 2);
     return 'true';
 }
 
 /**
- * Run opencode analysis on the checkout directory
+ * Run opencode analysis on a repository with modified (uncommitted) files
+ *
+ * The repository should already have the PR diff applied (files modified/uncommitted).
+ * Opencode will analyze the working directory and see changes via git diff.
+ *
+ * @param string $dir Path to the git repository with PR changes applied
+ * @param string $jobId Unique job ID for temp file naming
+ * @param string $cmdTemplate Unused, kept for signature compatibility
+ * @return string Raw opencode output
  */
-function runOpencodeAnalysis(string $dir, string $cmd): string
+function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate): string
 {
-    $cmd = str_replace('{dir}', escapeshellarg($dir), $cmd);
+    // Load review prompt from file (allows easy tweaking without code changes)
+    static $reviewPrompt = null;
+    if ($reviewPrompt === null) {
+        $promptFile = __DIR__ . '/prompts/review.txt';
+        if (file_exists($promptFile)) {
+            $reviewPrompt = file_get_contents($promptFile);
+            verbose_log("loaded review prompt from {$promptFile} (" . strlen($reviewPrompt) . " bytes)", 3);
+        } else {
+            $reviewPrompt = 'Analyze the uncommitted changes in this git repository. Run "git diff" to see what changed. For each issue found return JSON: {"file":"path","line":N,"severity":"error|warning|info","message":"description"}. Return empty array if no issues.';
+            verbose_log("review prompt file not found, using inline fallback", 2);
+        }
+    }
+
+    // Build command: opencode analyzes the working directory's changes
+    $opencodeCmd = sprintf(
+        'sh -c "cd %s && git diff --name-only && git diff && opencode run %s --format json" 2>&1',
+        escapeshellarg($dir),
+        escapeshellarg($reviewPrompt)
+    );
+
+    verbose_log("runOpencodeAnalysis: executing analysis in {$dir}", 3);
 
     $output = [];
     $ret = 0;
-    exec($cmd, $output, $ret);
+    exec($opencodeCmd, $output, $ret);
 
-    return implode("\n", $output);
+    $result = implode("\n", $output);
+    verbose_log("runOpencodeAnalysis: completed, output length=" . strlen($result), 3);
+
+    // Debug: log full raw output when parsing will likely fail
+    if (strlen($result) > 0) {
+        verbose_log("RAW_OUTPUT_START\n" . substr($result, 0, 8000) . "\nRAW_OUTPUT_END", 2);
+    }
+
+    return $result;
 }
 
 /**
  * Parse opencode JSON output into structured issues
+ *
+ * Opencode outputs JSON Lines (NDJSON) format - each line is a separate JSON object.
+ * The actual issues are embedded in 'text' events, wrapped in markdown code blocks.
  */
 function parseAnalysisOutput(string $rawOutput): array
 {
@@ -501,33 +816,44 @@ function parseAnalysisOutput(string $rawOutput): array
         return $issues;
     }
 
-    $data = json_decode($rawOutput, true);
-    if (!is_array($data)) {
-        if (preg_match('/\{.*\}/s', $rawOutput, $matches)) {
-            $data = json_decode($matches[0], true);
+    // Split by lines and parse each as JSON (JSON Lines format)
+    $lines = explode("\n", $rawOutput);
+    foreach ($lines as $line) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
         }
-    }
 
-    if (!is_array($data)) {
-        error_log('github-code-review: failed to parse opencode output');
-        return $issues;
-    }
-
-    // Normalize the output structure
-    foreach (['issues', 'problems', 'findings', 'bugs', 'errors'] as $key) {
-        if (isset($data[$key]) && is_array($data[$key])) {
-            $issues = $data[$key];
-            break;
+        $event = json_decode($line, true);
+        if (!is_array($event)) {
+            continue;
         }
-    }
 
-    // If still empty, treat top-level items as issues
-    if (empty($issues) && !empty($data)) {
-        foreach ($data as $item) {
-            if (is_array($item) && (isset($item['severity']) || isset($item['line']) || isset($item['message']))) {
-                $issues[] = $item;
+        // Look for text events that might contain JSON in code blocks
+        if (($event['type'] ?? '') === 'text') {
+            $text = $event['part']['text'] ?? '';
+            // Extract JSON from markdown code blocks
+            if (preg_match('/```json\s*(\[[\s\S]*?\]|\{[\s\S]*?\})\s*```/', $text, $matches)) {
+                $json = json_decode($matches[1], true);
+                if (is_array($json)) {
+                    // If it's an array of issues, merge them
+                    if (isset($json[0]) && is_array($json[0])) {
+                        foreach ($json as $issue) {
+                            if (is_array($issue) && (isset($issue['severity']) || isset($issue['line']) || isset($issue['message']))) {
+                                $issues[] = $issue;
+                            }
+                        }
+                    } elseif (isset($json['file']) || isset($json['line'])) {
+                        // Single issue object
+                        $issues[] = $json;
+                    }
+                }
             }
         }
+    }
+
+    if (empty($issues)) {
+        verbose_log('failed to parse opencode output', 1);
     }
 
     return $issues;
