@@ -432,22 +432,22 @@ function processJob(array $job): string
             return 'shutdown';
         }
         $actualBaseBranch = getPRBaseBranch($repo, $prNumber);
-        if ($actualBaseBranch !== null && $actualBaseBranch !== $baseBranch) {
-            verbose_log("retrying with actual base branch: {$actualBaseBranch}", 2);
-            $checkoutOk = checkoutBranch($repo, $actualBaseBranch, $checkoutPath);
-            if ($checkoutOk === 'shutdown') {
-                verbose_log("shutdown during fallback checkout, abandoning job", 2);
-                return 'shutdown';
-            }
+        if ($actualBaseBranch === null) {
+            verbose_log("could not determine actual base branch from API", 1);
+            return 'checkout failed: could not look up base branch';
+        }
+        verbose_log("retrying with actual base branch: {$actualBaseBranch}", 2);
+        $checkoutOk = checkoutBranch($repo, $actualBaseBranch, $checkoutPath);
+        if ($checkoutOk === 'shutdown') {
+            verbose_log("shutdown during fallback checkout, abandoning job", 2);
+            return 'shutdown';
         }
         if ($checkoutOk !== 'true') {
             verbose_log("checkout failed: {$checkoutOk}", 1);
             return 'checkout failed: ' . $checkoutOk;
         }
         // Update baseBranch for later use (e.g., diff application)
-        if (isset($actualBaseBranch)) {
-            $baseBranch = $actualBaseBranch;
-        }
+        $baseBranch = $actualBaseBranch;
     }
     verbose_log("checkout complete: base branch checked out", 2);
 
