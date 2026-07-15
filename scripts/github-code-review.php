@@ -79,6 +79,57 @@ function verbose_log(string $message, int $level = 1): void
 }
 
 /**
+ * Look up a PR ref (head or base branch) via GitHub API with retry logic
+ *
+ * @param string $repo Owner/repo format
+ * @param int $prNumber PR number
+ * @param string $refType 'head' or 'base'
+ * @return string|null The ref name, or null on failure
+ */
+function getPRRef(string $repo, int $prNumber, string $refType): ?string
+{
+    $output = [];
+    $ret = 0;
+    $attempts = 0;
+    $maxAttempts = 3;
+
+    while ($attempts < $maxAttempts) {
+        $attempts++;
+        $cmd = sprintf(
+            'gh api repos/%s/pulls/%d --jq .%s.ref 2>&1',
+            escapeshellarg($repo),
+            $prNumber,
+            $refType
+        );
+        exec($cmd, $output, $ret);
+
+        if ($ret === 0 && !empty($output)) {
+            $ref = trim(implode("\n", $output));
+            if ($ref !== '') {
+                return $ref;
+            }
+        }
+
+        // Check for rate limiting (GitHub API returns 403)
+        $outputStr = implode("\n", $output);
+        if (strpos($outputStr, 'API rate limit') !== false || strpos($outputStr, '403') !== false) {
+            verbose_log("GitHub API rate limited, waiting before retry...", 2);
+            sleep(2);
+            $output = [];
+            continue;
+        }
+
+        // On failure, wait a bit before retry (except on last attempt)
+        if ($attempts < $maxAttempts) {
+            usleep(250000); // 250ms
+            $output = [];
+        }
+    }
+
+    return null;
+}
+
+/**
  * Look up the actual head branch name for a PR via GitHub API
  *
  * @param string $repo Owner/repo format
@@ -87,15 +138,7 @@ function verbose_log(string $message, int $level = 1): void
  */
 function getPRHeadBranch(string $repo, int $prNumber): ?string
 {
-    $output = [];
-    $ret = 0;
-    $cmd = sprintf('gh api repos/%s/pulls/%d --jq .head.ref 2>&1', escapeshellarg($repo), $prNumber);
-    exec($cmd, $output, $ret);
-    if ($ret !== 0 || empty($output)) {
-        return null;
-    }
-    $branch = trim(implode("\n", $output));
-    return $branch ?: null;
+    return getPRRef($repo, $prNumber, 'head');
 }
 
 /**
@@ -107,15 +150,79 @@ function getPRHeadBranch(string $repo, int $prNumber): ?string
  */
 function getPRBaseBranch(string $repo, int $prNumber): ?string
 {
+    return getPRRef($repo, $prNumber, 'base');
+}
+
+/**
+ * Get the diff for a PR using gh pr diff
+ *
+ * @param string $repo Owner/repo format
+ * @param int $prNumber PR number
+ * @return string|null The diff content, or null on failure
+ */
+function getPRDiff(string $repo, int $prNumber): ?string
+{
     $output = [];
     $ret = 0;
-    $cmd = sprintf('gh api repos/%s/pulls/%d --jq .base.ref 2>&1', escapeshellarg($repo), $prNumber);
+    $cmd = sprintf('gh pr diff %d --repo %s 2>&1', $prNumber, escapeshellarg($repo));
     exec($cmd, $output, $ret);
+
     if ($ret !== 0 || empty($output)) {
+        verbose_log("getPRDiff: failed to fetch diff for {$repo}#{$prNumber}", 2);
         return null;
     }
-    $branch = trim(implode("\n", $output));
-    return $branch ?: null;
+
+    $diff = implode("\n", $output);
+    return $diff ?: null;
+}
+
+/**
+ * Apply a PR diff to a git repository using git apply
+ *
+ * @param string $checkoutPath Path to the git repository
+ * @param string $diff The diff content to apply
+ * @return bool True on success, false on failure
+ */
+function applyPRDiff(string $checkoutPath, ?string $diff): bool
+{
+    if ($diff === null || $diff === '') {
+        return false;
+    }
+
+    // Write diff to a temporary file
+    $diffFile = tempnam(sys_get_temp_dir(), 'pr_diff_');
+    if ($diffFile === false) {
+        verbose_log("applyPRDiff: failed to create temp file", 1);
+        return false;
+    }
+
+    try {
+        file_put_contents($diffFile, $diff);
+
+        // Apply the diff using git apply
+        $cmd = sprintf(
+            'cd %s && git apply --verbose %s 2>&1',
+            escapeshellarg($checkoutPath),
+            escapeshellarg($diffFile)
+        );
+
+        $output = [];
+        $ret = 0;
+        exec($cmd, $output, $ret);
+
+        if ($ret !== 0) {
+            verbose_log("applyPRDiff: git apply failed: " . implode("\n", $output), 2);
+            return false;
+        }
+
+        verbose_log("applyPRDiff: diff applied successfully", 3);
+        return true;
+    } finally {
+        // Always clean up temp file
+        if ($diffFile !== false && file_exists($diffFile)) {
+            unlink($diffFile);
+        }
+    }
 }
 
 // === Configuration ===
@@ -148,6 +255,11 @@ if ($ghToken !== '') {
 }
 
 // === Signal Handling ===
+// Enable async signals so signals can fire during blocking exec() calls
+if (function_exists('pcntl_async_signals')) {
+    pcntl_async_signals(true);
+}
+
 if (function_exists('pcntl_signal')) {
     pcntl_signal(SIGINT, function () {
         global $running;
@@ -251,6 +363,7 @@ function main(): void
         if (function_exists('pcntl_signal_dispatch')) {
             pcntl_signal_dispatch();
         }
+        // @phpstan-ignore-next-line
         if (!$running) {
             verbose_log("shutdown requested, exiting", 1);
             break;
@@ -305,6 +418,7 @@ function processJob(array $job): string
     }
     if ($checkoutOk !== 'true') {
         // Check if shutdown was requested before fallback attempt
+        // @phpstan-ignore-next-line
         if (!$running) {
             verbose_log("shutdown requested, abandoning job before fallback", 2);
             return 'shutdown';
@@ -312,6 +426,7 @@ function processJob(array $job): string
         // Fallback: look up actual base branch from GitHub API and retry
         verbose_log("base branch '{$baseBranch}' checkout failed, looking up actual base branch", 2);
         // Check if shutdown was requested before API call
+        // @phpstan-ignore-next-line
         if (!$running) {
             verbose_log("shutdown requested, abandoning job before base branch lookup", 2);
             return 'shutdown';
@@ -330,7 +445,9 @@ function processJob(array $job): string
             return 'checkout failed: ' . $checkoutOk;
         }
         // Update baseBranch for later use (e.g., diff application)
-        $baseBranch = $actualBaseBranch;
+        if (isset($actualBaseBranch)) {
+            $baseBranch = $actualBaseBranch;
+        }
     }
     verbose_log("checkout complete: base branch checked out", 2);
 
@@ -431,6 +548,10 @@ function processIssue(array $issue, string $checkoutPath, string $token, string 
         return false;
     }
     $originalContent = file_get_contents($originalFilePath);
+    if ($originalContent === false) {
+        verbose_log("file {$file} could not be read, skipping", 2);
+        return false;
+    }
 
     verbose_log("running opencode improve for {$file}:{$line}", 2);
     // Run opencode improve to generate a fix
@@ -455,13 +576,22 @@ function processIssue(array $issue, string $checkoutPath, string $token, string 
 
     // Apply the fix to the file
     $fixedContent = $fixResult['content'];
-    file_put_contents($originalFilePath, $fixedContent);
+    if ($fixedContent === null) {
+        verbose_log("fix content is null, skipping", 2);
+        return false;
+    }
+    if (file_put_contents($originalFilePath, $fixedContent) === false) {
+        verbose_log("failed to write fixed content to {$file}, skipping", 1);
+        return false;
+    }
 
     // Get the git diff for this specific file
     $diff = getFileDiff($checkoutPath, $file, $originalContent, $fixedContent);
 
     // Restore original (we don't actually commit, just use the diff for the comment)
-    file_put_contents($originalFilePath, $originalContent);
+    if (file_put_contents($originalFilePath, $originalContent) === false) {
+        verbose_log("failed to restore original content in {$file}", 1);
+    }
 
     // Build the comment with the diff
     $commentBody = buildIssueComment($issue, $diff, $repo, $prNumber, true);
@@ -555,6 +685,95 @@ function runOpencodeImprove(string $dir, string $file, int $line, string $cmd): 
 }
 
 /**
+ * Run a command with a timeout using proc_open and stream_select
+ *
+ * @param string $cmd Command to run
+ * @param int $timeoutSecs Timeout in seconds
+ * @return array{output: string, exitCode: int, timedOut: bool}
+ */
+function runCommandWithTimeout(string $cmd, int $timeoutSecs = 30): array
+{
+    $desc = [
+        0 => ['pipe', 'r'],  // stdin
+        1 => ['pipe', 'w'],  // stdout
+        2 => ['pipe', 'w'],  // stderr
+    ];
+
+    $proc = proc_open($cmd, $desc, $pipes);
+
+    if ($proc === false) {
+        return ['output' => '', 'exitCode' => -1, 'timedOut' => true];
+    }
+
+    // Set stdout and stderr to non-blocking
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+
+    $output = [];
+    $startTime = time();
+    $timedOut = false;
+
+    while (true) {
+        $read = [$pipes[1], $pipes[2]];
+        $write = null;
+        $except = null;
+        $secsRemaining = max(1, $timeoutSecs - (time() - $startTime));
+
+        $ready = @stream_select($read, $write, $except, 1, 0);
+
+        if ($ready === false) {
+            break;
+        }
+
+        foreach ($read as $pipe) {
+            $line = fgets($pipe);
+            if ($line !== false) {
+                $output[] = $line;
+            }
+        }
+
+        // Check if process has finished
+        $status = proc_get_status($proc);
+        if (!$status['running']) {
+            break;
+        }
+
+        // Check for timeout
+        if ((time() - $startTime) >= $timeoutSecs) {
+            $timedOut = true;
+            proc_terminate($proc, SIGKILL);
+            break;
+        }
+    }
+
+    // Read any remaining output
+    while (!feof($pipes[1])) {
+        $line = fgets($pipes[1]);
+        if ($line !== false) {
+            $output[] = $line;
+        }
+    }
+    while (!feof($pipes[2])) {
+        $line = fgets($pipes[2]);
+        if ($line !== false) {
+            $output[] = $line;
+        }
+    }
+
+    foreach ($pipes as $pipe) {
+        fclose($pipe);
+    }
+
+    $exitCode = proc_close($proc);
+
+    return [
+        'output' => implode('', $output),
+        'exitCode' => $exitCode,
+        'timedOut' => $timedOut,
+    ];
+}
+
+/**
  * Parse opencode improve output to extract fixed content
  *
  * @param string $rawOutput Raw JSON/text output from opencode
@@ -624,7 +843,33 @@ function parseImproveOutput(string $rawOutput, string $file, string $originalCon
 function initGitRepo(string $checkoutPath): void
 {
     // Set git identity (needed for diff)
-    exec("cd " . escapeshellarg($checkoutPath) . " && git config user.email 'code-review-bot@webhooks.interserver.net' && git config user.name 'Code Review Bot' && git add -A 2>/dev/null");
+    $cmd = sprintf(
+        'cd %s && git config user.email %s && git config user.name %s && git add -A 2>/dev/null',
+        escapeshellarg($checkoutPath),
+        escapeshellarg('code-review-bot@webhooks.interserver.net'),
+        escapeshellarg('Code Review Bot')
+    );
+    $output = [];
+    $ret = 0;
+    exec($cmd, $output, $ret);
+    if ($ret !== 0) {
+        verbose_log("initGitRepo: git config failed with code {$ret}", 1);
+    }
+}
+
+/**
+ * Clean up a checkout directory
+ */
+function cleanupCheckout(string $path): void
+{
+    if (is_dir($path)) {
+        $output = [];
+        $ret = 0;
+        exec("rm -rf " . escapeshellarg($path) . " 2>&1", $output, $ret);
+        if ($ret !== 0) {
+            verbose_log("cleanupCheckout: failed to remove {$path}", 1);
+        }
+    }
 }
 
 /**
@@ -649,32 +894,43 @@ function getFileDiff(string $checkoutPath, string $file, string $originalContent
     $originalTmp = tempnam(sys_get_temp_dir(), 'orig_');
     $fixedTmp = tempnam(sys_get_temp_dir(), 'fixed_');
 
-    file_put_contents($originalTmp, $originalContent);
-    file_put_contents($fixedTmp, $fixedContent);
+    // Ensure temp files are always cleaned up
+    $cleanup = function () use ($originalTmp, $fixedTmp): void {
+        if ($originalTmp !== false && file_exists($originalTmp)) {
+            unlink($originalTmp);
+        }
+        if ($fixedTmp !== false && file_exists($fixedTmp)) {
+            unlink($fixedTmp);
+        }
+    };
 
-    $diffCmd = sprintf(
-        'diff -u %s %s 2>/dev/null | tail -n +4',
-        escapeshellarg($originalTmp),
-        escapeshellarg($fixedTmp)
-    );
+    try {
+        file_put_contents($originalTmp, $originalContent);
+        file_put_contents($fixedTmp, $fixedContent);
 
-    $diffOutput = [];
-    $ret = 0;
-    exec($diffCmd, $diffOutput, $ret);
+        $diffCmd = sprintf(
+            'diff -u %s %s 2>/dev/null | tail -n +4',
+            escapeshellarg($originalTmp),
+            escapeshellarg($fixedTmp)
+        );
 
-    unlink($originalTmp);
-    unlink($fixedTmp);
+        $diffOutput = [];
+        $ret = 0;
+        exec($diffCmd, $diffOutput, $ret);
 
-    if (!empty($diffOutput)) {
-        // Remove the --- and +++ lines from diff output and use our own
-        $diffLines = array_slice($diffOutput, 2); // Skip --- and +++ lines
-        $diff .= implode("\n", $diffLines);
-    } else {
-        // Files are identical or diff failed
-        return '';
+        if (!empty($diffOutput)) {
+            // Remove the --- and +++ lines from diff output and use our own
+            $diffLines = array_slice($diffOutput, 2); // Skip --- and +++ lines
+            $diff .= implode("\n", $diffLines);
+        } else {
+            // Files are identical or diff failed
+            return '';
+        }
+
+        return $diff;
+    } finally {
+        $cleanup();
     }
-
-    return $diff;
 }
 
 /**
@@ -686,6 +942,19 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
     global $running;
     verbose_log("checkoutBranch: repo={$repo} branch={$branch} path={$checkoutPath}", 3);
 
+    // Validate repo format to prevent path traversal
+    if (!preg_match('/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/', $repo)) {
+        verbose_log("checkoutBranch: invalid repo format: {$repo}", 1);
+        return 'invalid repo format';
+    }
+
+    // Check if shutdown was requested before starting
+    // @phpstan-ignore-next-line
+    if (!$running) {
+        verbose_log("shutdown requested before checkout", 2);
+        return 'shutdown';
+    }
+
     // Create parent directory if needed
     $parentDir = dirname($checkoutPath);
     if (!is_dir($parentDir)) {
@@ -696,7 +965,7 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
     // Remove existing checkout if present
     if (is_dir($checkoutPath)) {
         verbose_log("removing existing checkout: {$checkoutPath}", 3);
-        exec("rm -rf " . escapeshellarg($checkoutPath));
+        cleanupCheckout($checkoutPath);
     }
 
     // Use gh repo clone which automatically uses gh authentication
@@ -713,20 +982,38 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
 
     $cloneOutput = [];
     $cloneRet = 0;
+
+    // Check $running BEFORE first exec
+    // @phpstan-ignore-next-line
+    if (!$running) {
+        verbose_log("shutdown requested before first clone exec", 2);
+        return 'shutdown';
+    }
+
     exec($cloneCmd, $cloneOutput, $cloneRet);
 
+    // After exec returns, check if signal arrived during exec
+    // @phpstan-ignore-next-line
+    if (!$running) {
+        verbose_log("shutdown requested during first clone exec", 2);
+        return 'shutdown';
+    }
+
     if ($cloneRet !== 0) {
-        // Check if shutdown was requested before retrying
-        if (!$running) {
-            verbose_log("shutdown requested, abandoning checkout retry", 2);
-            return 'shutdown';
-        }
         verbose_log("first clone attempt failed, trying with --depth 1", 3);
         // Clean up partial checkout before retry
         if (is_dir($checkoutPath)) {
             verbose_log("cleaning up partial checkout before retry: {$checkoutPath}", 3);
-            exec("rm -rf " . escapeshellarg($checkoutPath));
+            cleanupCheckout($checkoutPath);
         }
+
+        // Check $running BEFORE retry exec
+        // @phpstan-ignore-next-line
+        if (!$running) {
+            verbose_log("shutdown requested before retry clone exec", 2);
+            return 'shutdown';
+        }
+
         // Try with --depth 1 passed through to git (after --)
         $cloneCmd = sprintf(
             'gh repo clone %s %s -- --depth 1 --branch %s 2>&1',
@@ -736,16 +1023,30 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
         );
         exec($cloneCmd, $cloneOutput, $cloneRet);
 
+        // After exec returns, check if signal arrived during exec
+        // @phpstan-ignore-next-line
+        if (!$running) {
+            verbose_log("shutdown requested during retry clone exec", 2);
+            return 'shutdown';
+        }
+
         if ($cloneRet !== 0) {
-            // Check if shutdown was requested after retry failure
-            if (!$running) {
-                verbose_log("shutdown requested after retry failure", 2);
-                return 'shutdown';
-            }
             $error = 'gh repo clone failed: ' . implode("\n", $cloneOutput);
             verbose_log("checkoutBranch FAILED: {$error}", 1);
             return $error;
         }
+    }
+
+    // Validate checkout path is under checkoutRoot after clone
+    $realPath = realpath($checkoutPath);
+    if ($realPath === false) {
+        verbose_log("checkoutBranch: realpath failed for {$checkoutPath}", 1);
+        return 'checkout path validation failed';
+    }
+    global $checkoutRoot;
+    if ($checkoutRoot !== '' && strpos($realPath, $checkoutRoot) !== 0) {
+        verbose_log("checkoutBranch: path {$realPath} is not under {$checkoutRoot}", 1);
+        return 'checkout path outside allowed root';
     }
 
     verbose_log("checkoutBranch: success", 2);
@@ -771,7 +1072,12 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate): s
         $promptFile = __DIR__ . '/prompts/review.txt';
         if (file_exists($promptFile)) {
             $reviewPrompt = file_get_contents($promptFile);
-            verbose_log("loaded review prompt from {$promptFile} (" . strlen($reviewPrompt) . " bytes)", 3);
+            if ($reviewPrompt === false) {
+                $reviewPrompt = 'Analyze the uncommitted changes in this git repository. Run "git diff" to see what changed. For each issue found return JSON: {"file":"path","line":N,"severity":"error|warning|info","message":"description"}. Return empty array if no issues.';
+                verbose_log("review prompt file read failed, using inline fallback", 2);
+            } else {
+                verbose_log("loaded review prompt from {$promptFile} (" . strlen($reviewPrompt) . " bytes)", 3);
+            }
         } else {
             $reviewPrompt = 'Analyze the uncommitted changes in this git repository. Run "git diff" to see what changed. For each issue found return JSON: {"file":"path","line":N,"severity":"error|warning|info","message":"description"}. Return empty array if no issues.';
             verbose_log("review prompt file not found, using inline fallback", 2);
@@ -813,8 +1119,10 @@ function parseAnalysisOutput(string $rawOutput): array
     $issues = [];
 
     if ($rawOutput === '') {
-        return $issues;
+        return $issues;  // No output = no issues (not an error)
     }
+
+    $hadValidParse = false;
 
     // Split by lines and parse each as JSON (JSON Lines format)
     $lines = explode("\n", $rawOutput);
@@ -836,6 +1144,7 @@ function parseAnalysisOutput(string $rawOutput): array
             if (preg_match('/```json\s*(\[[\s\S]*?\]|\{[\s\S]*?\})\s*```/', $text, $matches)) {
                 $json = json_decode($matches[1], true);
                 if (is_array($json)) {
+                    $hadValidParse = true;
                     // If it's an array of issues, merge them
                     if (isset($json[0]) && is_array($json[0])) {
                         foreach ($json as $issue) {
@@ -852,8 +1161,10 @@ function parseAnalysisOutput(string $rawOutput): array
         }
     }
 
-    if (empty($issues)) {
-        verbose_log('failed to parse opencode output', 1);
+    if (!$hadValidParse) {
+        verbose_log('failed to parse opencode output - no valid JSON found in output', 1);
+    } elseif (empty($issues)) {
+        verbose_log('opencode output parsed but no issues found', 3);
     }
 
     return $issues;
@@ -977,6 +1288,9 @@ function handleFailure(array $job, string $reason): void
         error_log("github-code-review: job {$job['id']} exceeded max retries ({MAX_RETRIES}), discarding: {$reason}");
         return;
     }
+
+    // Generate new UUID for requeued job to avoid deduplication issues
+    $job['id'] = CodeReviewQueue::uuidV4();
 
     error_log("github-code-review: requeueing job {$job['id']} (retry {$retryCount}/" . MAX_RETRIES . "): {$reason}");
     CodeReviewQueue::requeue($job);

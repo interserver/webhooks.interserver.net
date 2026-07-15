@@ -100,13 +100,26 @@ class CodeReviewQueue
         }
 
         try {
-            // BRPOP blocks until an element is available or timeout
-            $result = $r->brpop([self::QUEUE_KEY], $timeout);
-            if ($result === null) {
+            // When timeout=0, use non-blocking RPOP to avoid infinite block
+            if ($timeout === 0) {
+                $result = $r->rpop(self::QUEUE_KEY);
+                if ($result === null) {
+                    return null;
+                }
+                // Wrap in array format for consistent handling below
+                $json = $result;
+            } else {
+                // BRPOP blocks until an element is available or timeout
+                $result = $r->brpop([self::QUEUE_KEY], $timeout);
+                if ($result === null) {
+                    return null;
+                }
+                // $result is [key, value]
+                $json = $result[1] ?? null;
+            }
+            if ($json === null) {
                 return null;
             }
-            // $result is [key, value]
-            $json = $result[1] ?? null;
             if (!is_string($json)) {
                 return null;
             }
@@ -169,7 +182,7 @@ class CodeReviewQueue
         ];
     }
 
-    private static function uuidV4(): string
+    public static function uuidV4(): string
     {
         $b = random_bytes(16);
         $b[6] = chr((ord($b[6]) & 0x0f) | 0x40);
