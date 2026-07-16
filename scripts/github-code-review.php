@@ -40,9 +40,9 @@ $verbose = 0;
 $running = true;
 $logFile = null;
 $optind = 0;
-$args = getopt('vhwb', ['verbose', 'help', 'wait-if-empty', 'review-bots', 'log::'], $optind);
+$args = getopt('vhwb:a:', ['verbose', 'help', 'wait-if-empty', 'review-bots', 'show-agent', 'show-all-issues', 'log::'], $optind);
 if (isset($args['h']) || isset($args['help'])) {
-    fwrite(STDOUT, "Usage: php scripts/github-code-review.php [-v|--verbose]... [-w|--wait-if-empty] [-b|--review-bots] [--log=FILE]\n");
+    fwrite(STDOUT, "Usage: php scripts/github-code-review.php [-v|--verbose]... [-w|--wait-if-empty] [-b|--review-bots] [-a|--show-agent] [--show-all-issues] [--log=FILE]\n");
     fwrite(STDOUT, "  -v, --verbose      Increase verbosity (can stack: -vv, -vvv, -vvvv)\n");
     fwrite(STDOUT, "    -v   [INFO]     Essential progress (job start/complete/errors)\n");
     fwrite(STDOUT, "    -vv  [DEBUG]    Detailed progress (checkpoints, function entry)\n");
@@ -50,6 +50,8 @@ if (isset($args['h']) || isset($args['help'])) {
     fwrite(STDOUT, "    -vvvv [RAW]     Everything: raw gh output, API responses, full command output\n");
     fwrite(STDOUT, "  -w, --wait-if-empty  Wait for jobs when queue is empty (default: exit)\n");
     fwrite(STDOUT, "  -b, --review-bots    Also review PRs from bots like dependabot (default: skip)\n");
+    fwrite(STDOUT, "  -a, --show-agent      Stream opencode agent messages in real-time (colorized at -vvvv)\n");
+    fwrite(STDOUT, "  --show-all-issues     Include issues without file/line in report (default: skip summary sections)\n");
     fwrite(STDOUT, "  --log=FILE            Append all log output to FILE (in addition to stderr)\n");
     fwrite(STDOUT, "  -h, --help        Show this help message\n");
     fwrite(STDOUT, "\n  Press Ctrl-C to exit gracefully at any time.\n");
@@ -63,6 +65,8 @@ if (isset($args['verbose'])) {
 }
 $waitIfEmpty = isset($args['w']) || isset($args['wait-if-empty']);
 $reviewBots = isset($args['b']) || isset($args['review-bots']);
+$showAgent = isset($args['a']) || isset($args['show-agent']);
+$showAllIssues = isset($args['show-all-issues']);
 if (isset($args['log'])) {
     $logFile = $args['log'] !== false ? $args['log'] : 'github-code-review.log';
 }
@@ -135,6 +139,154 @@ function verbose_markdown(string $label, string $markdown): void
             file_put_contents($logFile, "[{$timestamp}] {$line}\n[{$timestamp}] {$markdown}\n", FILE_APPEND);
         }
     }
+}
+
+/**
+ * Parse an opencode NDJSON event line and return a display string or null
+ *
+ * Event types:
+ *   - text      → display part.text (truncate at 5000 chars)
+ *   - tool_use  → display 🔧 [tool] filePath or prompt snippet
+ *   - step_start → display step-start: {id}
+ *   - step_finish → display ✓ step {tokens.input+output}
+ *   - stop      → display ■ analysis complete
+ *
+ * @param string $line Raw NDJSON line
+ * @param int $verbose Current verbosity level
+ * @return string|null Formatted display string, or null to skip
+ */
+function parseOpencodeEventLine(string $line, int $verbose = 4): ?string
+{
+    $line = trim($line);
+    if ($line === '') {
+        return null;
+    }
+
+    $event = json_decode($line, true);
+    if (!is_array($event)) {
+        return null;
+    }
+
+    $type = $event['type'] ?? '';
+
+    switch ($type) {
+        case 'text':
+            $part = $event['part'] ?? [];
+            $text = is_array($part) ? ($part['text'] ?? '') : (is_string($part) ? $part : '');
+            if ($text === '') {
+                return null;
+            }
+            // Truncate at 5000 chars
+            if (strlen($text) > 5000) {
+                $text = substr($text, 0, 5000) . '... [truncated]';
+            }
+            // Colorize markdown at verbosity 4
+            if ($verbose >= 4) {
+                try {
+                    return \SugarCraft\Shine\Renderer::renderMarkdown($text);
+                } catch (\Throwable $e) {
+                    return $text;
+                }
+            }
+            return $text;
+
+        case 'tool_use':
+            $part = $event['part'] ?? [];
+            $tool = is_array($part) ? ($part['tool'] ?? 'unknown') : 'unknown';
+            $state = $event['part']['state'] ?? [];
+            $input = is_array($state) ? ($state['input'] ?? []) : [];
+
+            if (isset($input['filePath'])) {
+                $path = $input['filePath'];
+                // Shorten long paths
+                if (strlen($path) > 60) {
+                    $path = '...' . substr($path, -57);
+                }
+                return "🔧 [{$tool}] {$path}";
+            }
+            if (isset($input['prompt'])) {
+                $prompt = $input['prompt'];
+                // Truncate prompt display
+                if (strlen($prompt) > 60) {
+                    $prompt = substr($prompt, 0, 60) . '...';
+                }
+                return "🔧 [{$tool}] {$prompt}";
+            }
+            // Just show tool name if no input context
+            if (isset($input['query'])) {
+                $query = $input['query'];
+                if (strlen($query) > 60) {
+                    $query = substr($query, 0, 60) . '...';
+                }
+                return "🔧 [{$tool}] {$query}";
+            }
+            return "🔧 [{$tool}]";
+
+        case 'step_start':
+            $stepId = $event['part']['stepId'] ?? $event['part']['id'] ?? 'unknown';
+            return "▶ step-start: {$stepId}";
+
+        case 'step_finish':
+            $part = $event['part'] ?? [];
+            $tokens = $part['tokens'] ?? [];
+            $inputTokens = is_array($tokens) ? ($tokens['input'] ?? 0) : 0;
+            $outputTokens = is_array($tokens) ? ($tokens['output'] ?? 0) : 0;
+            return "✓ step {$inputTokens}+{$outputTokens} tokens";
+
+        case 'stop':
+            return '■ analysis complete';
+
+        default:
+            // For unknown types, show nothing (no spam)
+            return null;
+    }
+}
+
+/**
+ * Stream opencode output in real-time, parsing NDJSON lines and displaying them
+ *
+ * @param resource $stdout Pipe from proc_open
+ * @param int $verbose Verbosity level
+ * @param string|null $logFile Optional log file path
+ * @return string Accumulated raw output
+ */
+function streamOpencodeOutput($stdout, int $verbose, ?string $logFile = null): string
+{
+    $accumulated = '';
+    $renderer = null;
+
+    if ($verbose >= 4) {
+        try {
+            $renderer = new \SugarCraft\Shine\Renderer();
+        } catch (\Throwable $e) {
+            $renderer = null;
+        }
+    }
+
+    while (!feof($stdout)) {
+        $line = fgets($stdout);
+        if ($line === false) {
+            break;
+        }
+
+        $accumulated .= $line;
+
+        // Parse and display the event in real-time
+        $display = parseOpencodeEventLine($line, $verbose);
+        if ($display !== null && $display !== '') {
+            // Output to stderr for real-time display
+            fwrite(STDERR, $display . "\n");
+            fflush(STDERR);
+
+            // Also log to file if configured
+            if ($logFile !== null) {
+                $timestamp = date('Y-m-d H:i:s.') . sprintf('%06d', (microtime(true) - floor(microtime(true))) * 1000000);
+                file_put_contents($logFile, "[{$timestamp}] [AGENT] {$display}\n", FILE_APPEND);
+            }
+        }
+    }
+
+    return $accumulated;
 }
 
 /**
@@ -477,7 +629,7 @@ function main(): void
  */
 function processJob(array $job): string
 {
-    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $opencodeImproveCmd, $verbose, $reviewBots, $running;
+    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $opencodeImproveCmd, $verbose, $reviewBots, $running, $showAgent, $showAllIssues;
 
     // Check if shutdown was requested before starting work
     if (!$running) {
@@ -568,10 +720,10 @@ function processJob(array $job): string
         initGitRepo($checkoutPath);
 
         verbose_log("starting opencode analysis for {$repo}#{$prNumber} in {$checkoutPath}", 2);
-        $analysisOutput = runOpencodeAnalysis($checkoutPath, $jobId, $opencodeAnalyzeCmd);
+        $analysisOutput = runOpencodeAnalysis($checkoutPath, $jobId, $opencodeAnalyzeCmd, $showAgent);
         verbose_log("analysis command completed", 3);
 
-        $issues = parseAnalysisOutput($analysisOutput);
+        $issues = parseAnalysisOutput($analysisOutput, $showAllIssues);
         verbose_log("found " . count($issues) . " issues", 2);
 
         // At DEBUG level, log the actual JSON issues found
@@ -1211,7 +1363,7 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
  * @param string $cmdTemplate Unused, kept for signature compatibility
  * @return string Raw opencode output
  */
-function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate): string
+function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bool $showAgent = false): string
 {
     // Load review prompt from file (allows easy tweaking without code changes)
     static $reviewPrompt = null;
@@ -1239,18 +1391,72 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate): s
 
     // Use bash -c with $(cat ...) to read prompt from file - avoids all escaping issues
     $opencodeCmd = sprintf(
-        'bash -c \'cd %s && git diff --name-only && git diff && opencode run "$(cat %s)" --format json\' 2>&1',
+        'cd %s && git diff --name-only && git diff && opencode run "$(cat %s)" --format json',
         escapeshellarg($dir),
         escapeshellarg($promptFile)
     );
 
-    verbose_log("runOpencodeAnalysis: executing analysis in {$dir}", 3);
+    verbose_log("runOpencodeAnalysis: executing analysis in {$dir}" . ($showAgent ? ' [streaming]' : ''), 3);
 
+    global $running, $verbose, $logFile;
+
+    // When showAgent is enabled, use proc_open with streaming
+    if ($showAgent) {
+        $desc = [
+            0 => ['pipe', 'r'],  // stdin
+            1 => ['pipe', 'w'],  // stdout
+            2 => ['pipe', 'w'],  // stderr (capture but don't stream separately)
+        ];
+
+        $proc = proc_open($opencodeCmd, $desc, $pipes, $dir);
+
+        if ($proc === false) {
+            verbose_log("runOpencodeAnalysis: proc_open failed", 1);
+            return '';
+        }
+
+        // Set stdout to non-blocking for streaming reads
+        stream_set_blocking($pipes[1], false);
+
+        $result = streamOpencodeOutput($pipes[1], $verbose, $logFile);
+
+        // Read any remaining stderr
+        $stderr = '';
+        if (!feof($pipes[2])) {
+            $stderr = stream_get_contents($pipes[2]);
+            if ($stderr !== false && $stderr !== '') {
+                verbose_raw("opencode_stderr", $stderr);
+            }
+        }
+
+        // Clean up pipes
+        foreach ($pipes as $pipe) {
+            fclose($pipe);
+        }
+
+        $exitCode = proc_close($proc);
+
+        if (!$running) {
+            verbose_log("runOpencodeAnalysis: shutdown requested during streaming, discarding output", 2);
+            return '';
+        }
+
+        verbose_log("runOpencodeAnalysis: streaming completed (exit={$exitCode}), output length=" . strlen($result), 3);
+
+        // At level 4 (RAW), log the full opencode output for debugging
+        // (already streamed, but log the full accumulated output for log file)
+        if (strlen($result) > 0 && $verbose >= 4) {
+            verbose_markdown("opencode_output", $result);
+        }
+
+        return $result;
+    }
+
+    // Standard buffered execution (original behavior)
     $output = [];
     $ret = 0;
-    exec($opencodeCmd, $output, $ret);
+    exec($opencodeCmd . ' 2>&1', $output, $ret);
 
-    global $running;
     if (!$running) {
         verbose_log("runOpencodeAnalysis: shutdown requested during exec, discarding output", 2);
         return '';
@@ -1277,8 +1483,10 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate): s
  *
  * Also supports JSON code blocks for backward compatibility.
  */
-function parseAnalysisOutput(string $rawOutput): array
+function parseAnalysisOutput(string $rawOutput, bool $showAllIssues = false): array
 {
+    global $verbose, $showAgent;
+
     $issues = [];
 
     if ($rawOutput === '') {
@@ -1330,10 +1538,27 @@ function parseAnalysisOutput(string $rawOutput): array
         }
     }
 
+    // Display full analysis markdown at verbosity 3+ when --show-agent is set
+    if ($showAgent && $verbose >= 3 && $fullText !== '') {
+        verbose_markdown("code_review_report", $fullText);
+    }
+
     if (!$hadValidParse) {
         verbose_log('failed to parse opencode output - no valid JSON or markdown issues found', 1);
     } elseif (empty($issues)) {
         verbose_log('opencode output parsed but no issues found', 3);
+    }
+
+    // Filter issues: only keep those with BOTH file path AND line number,
+    // unless --show-all-issues is passed (to include summary sections)
+    if (!$showAllIssues) {
+        $issues = array_filter($issues, function (array $issue): bool {
+            $file = $issue['file'] ?? '';
+            $line = $issue['line'] ?? 0;
+            // Keep only issues that have BOTH file and line
+            return $file !== '' && $line > 0;
+        });
+        $issues = array_values($issues); // Re-index array
     }
 
     return $issues;
