@@ -252,7 +252,7 @@ function applyPRDiff(string $checkoutPath, ?string $diff): bool
         return false;
     }
 
-    // Write diff to a temporary file
+    // Write diff to a temporary file (use binary mode to preserve all bytes)
     $diffFile = tempnam(sys_get_temp_dir(), 'pr_diff_');
     if ($diffFile === false) {
         verbose_log("applyPRDiff: failed to create temp file", 1);
@@ -260,26 +260,60 @@ function applyPRDiff(string $checkoutPath, ?string $diff): bool
     }
 
     try {
-        file_put_contents($diffFile, $diff);
+        // Write with explicit LF line endings (not CRLF) for cross-platform compat
+        $diffNormalized = str_replace(["\r\n", "\r"], "\n", $diff);
+        file_put_contents($diffFile, $diffNormalized);
 
-        // Apply the diff using git apply
-        $cmd = sprintf(
-            'cd %s && git apply --verbose %s 2>&1',
-            escapeshellarg($checkoutPath),
-            escapeshellarg($diffFile)
-        );
+        // Try multiple strategies in order of preference
+        $strategies = [
+            // Strategy 1: Strict apply with ignore-whitespace (covers most real diffs)
+            [
+                'cmd' => 'git apply --whitespace=nowarn --ignore-whitespace %s 2>&1',
+                'label' => 'ignore-whitespace',
+            ],
+            // Strategy 2: 3-way merge fallback - applies partial diff using index info
+            [
+                'cmd' => 'git apply --3way --whitespace=nowarn %s 2>&1',
+                'label' => '3way-merge',
+            ],
+            // Strategy 3: patch command (more lenient than git apply for complex diffs)
+            [
+                'cmd' => 'patch -p1 --no-backup-if-mismatch --dry-run < %s 2>&1 && patch -p1 --no-backup-if-mismatch < %s',
+                'label' => 'patch-dryrun-then-apply',
+                'doubleFile' => true,
+            ],
+            // Strategy 4: git apply with --whitespace=fix (auto-fix whitespace)
+            [
+                'cmd' => 'git apply --whitespace=fix %s 2>&1',
+                'label' => 'whitespace-fix',
+            ],
+        ];
 
-        $output = [];
-        $ret = 0;
-        exec($cmd, $output, $ret);
+        $lastOutput = '';
 
-        if ($ret !== 0) {
-            verbose_log("applyPRDiff: git apply failed: " . implode("\n", $output), 2);
-            return false;
+        foreach ($strategies as $strategy) {
+            $cmd = sprintf(
+                'cd %s && ' . $strategy['cmd'],
+                escapeshellarg($checkoutPath),
+                escapeshellarg($diffFile),
+                escapeshellarg($diffFile)
+            );
+
+            $output = [];
+            $ret = 0;
+            exec($cmd, $output, $ret);
+            $lastOutput = implode("\n", $output);
+
+            if ($ret === 0) {
+                verbose_log("applyPRDiff: diff applied successfully (strategy: {$strategy['label']})", 3);
+                return true;
+            }
+
+            verbose_log("applyPRDiff: strategy {$strategy['label']} failed: " . substr($lastOutput, 0, 200), 3);
         }
 
-        verbose_log("applyPRDiff: diff applied successfully", 3);
-        return true;
+        verbose_log("applyPRDiff: all strategies failed - last output: " . substr($lastOutput, 0, 500), 2);
+        return false;
     } finally {
         // Always clean up temp file
         if ($diffFile !== false && file_exists($diffFile)) {
