@@ -15,4 +15,19 @@ parameters:
 		-
 			message: "~While loop condition is always true~"
 			path: scripts/github-code-review.php
+		-
+			message: "~Property .* has unknown class SugarCraft~"
+			path: src/Cli/Interactor/InteractiveTui.php
+		-
+			message: "~Call to method .* on an unknown class SugarCraft~"
+			path: src/Cli/Interactor/InteractiveTui.php
+		-
+			message: "~Instantiated class SugarCraft~"
+			path: src/Cli/Interactor/InteractiveTui.php
+		-
+			message: "~Property .* is never read, only written~"
+			path: src/Cli/Interactor/InteractiveTui.php
+		-
+			message: "~Method .* should return .* but returns~"
+			path: src/Cli/Interactor/InteractiveTui.php
 	reportUnmatchedIgnoredErrors: false

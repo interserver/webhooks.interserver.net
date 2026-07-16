@@ -1,0 +1,323 @@
+#!/usr/bin/env php
+<?php
+declare(strict_types=1);
+
+/**
+ * Build script for github-review PHAR archive.
+ *
+ * This script creates a self-contained PHAR file containing all dependencies
+ * required to run the github-review CLI tool.
+ *
+ * Usage:
+ *   php bin/build-phar [--sign]
+ *
+ * Options:
+ *   --sign    Sign the PHAR with openssl (requires a private key)
+ *
+ * Requirements:
+ *   - PHP 7.4+ with PHAR support enabled
+ *   - openssl extension (for signing)
+ *
+ * @example php bin/build-phar
+ * @example php bin/build-phar --sign
+ */
+
+$longOpts = [
+    'sign',
+    'help',
+    'version',
+];
+
+$options = getopt('', $longOpts);
+
+if (isset($options['help'])) {
+    echo <<<'HELP'
+Build github-review PHAR archive
+
+Usage: php bin/build-phar [options]
+
+Options:
+  --sign    Sign the PHAR with a private key (requires private.key)
+  --help    Show this help message
+  --version Show version information
+
+Description:
+  Creates a self-contained PHAR archive at build/github-review.phar that
+  can be distributed and run on any system with PHP 7.4+.
+
+  The PHAR includes:
+  - All source files from src/Cli/
+  - Symfony Console framework
+  - Predis Redis client
+  - PHP dotenv loader
+  - Vendor autoloader
+
+  For signing, place your OpenSSL private key at:
+  - ./private.key (PEM format)
+
+  Or specify the key path using the PRIVATE_KEY environment variable:
+  PRIVATE_KEY=/path/to/key php bin/build-phar --sign
+
+HELP;
+    exit(0);
+}
+
+if (isset($options['version'])) {
+    echo "github-review PHAR builder v1.0.0\n";
+    exit(0);
+}
+
+// Determine base directory and build paths
+$baseDir = dirname(__DIR__);
+$buildDir = $baseDir . '/build';
+$pharFile = $buildDir . '/github-review.phar';
+$privateKey = getenv('PRIVATE_KEY') ?: ($baseDir . '/private.key');
+
+echo "Building github-review PHAR archive...\n";
+echo "Base directory: {$baseDir}\n";
+
+// Verify PHAR can be written
+if (!Phar::canWrite()) {
+    echo "ERROR: PHAR writes are disabled. Enable them with:\n";
+    echo "  php -d phar.readonly=0 bin/build-phar\n";
+    exit(1);
+}
+
+// Clean and create build directory
+if (!is_dir($buildDir)) {
+    mkdir($buildDir, 0755, true);
+}
+
+// Remove existing phar if present
+if (file_exists($pharFile)) {
+    unlink($pharFile);
+    echo "Removed existing PHAR: {$pharFile}\n";
+}
+
+// Create the PHAR archive
+$phar = new Phar($pharFile, 0, 'github-review.phar');
+
+// Set PHAR stub - this is the entry point when running the PHAR
+$stub = <<<'STUB'
+#!/usr/bin/env php
+<?php
+Phar::mapPhar('github-review.phar');
+require_once 'phar://github-review.phar/vendor/autoload.php';
+
+use Webhooks\Cli\Application;
+
+$app = new Application();
+exit($app->run());
+__HALT_COMPILER();
+STUB;
+
+$phar->setStub($stub);
+$phar->startBuffering();
+
+/**
+ * Recursively add a directory to the PHAR with proper path mapping.
+ *
+ * @param Phar $phar The PHAR archive
+ * @param string $sourceDir The source directory to add
+ * @param string $prefix The path prefix to use in the PHAR (e.g., '/vendor/composer')
+ * @param string $regex File pattern to match
+ * @return int Number of files added
+ */
+function addDirectoryToPhar(Phar $phar, string $sourceDir, string $prefix, string $regex = '/\.php$/'): int
+{
+    $count = 0;
+    $iterator = new RecursiveIteratorIterator(
+        new RecursiveDirectoryIterator($sourceDir, RecursiveDirectoryIterator::SKIP_DOTS),
+        RecursiveIteratorIterator::SELF_FIRST
+    );
+
+    foreach ($iterator as $file) {
+        if ($file->isDir()) {
+            $relativePath = $prefix . '/' . $iterator->getSubPathName();
+            $phar->addEmptyDir($relativePath);
+        } elseif ($file->isFile() && preg_match($regex, $file->getFilename())) {
+            $relativePath = $prefix . '/' . $iterator->getSubPathName();
+            $phar->addFile($file->getPathname(), $relativePath);
+            $count++;
+        }
+    }
+
+    return $count;
+}
+
+/**
+ * Add a single file to the PHAR with proper path mapping.
+ *
+ * @param Phar $phar The PHAR archive
+ * @param string $sourceFile The source file path
+ * @param string $pharPath The path within the PHAR
+ */
+function addFileToPhar(Phar $phar, string $sourceFile, string $pharPath): void
+{
+    if (file_exists($sourceFile)) {
+        $phar->addFile($sourceFile, $pharPath);
+    }
+}
+
+// Add source files from src/Cli/
+$srcCliDir = $baseDir . '/src/Cli';
+if (is_dir($srcCliDir)) {
+    echo "Adding source files from src/Cli/...\n";
+    $count = addDirectoryToPhar($phar, $srcCliDir, '/src/Cli');
+    echo "  Added {$count} files from src/Cli/\n";
+} else {
+    echo "WARNING: Source directory not found: {$srcCliDir}\n";
+}
+
+// Add CodeReviewQueue.php
+addFileToPhar($phar, $baseDir . '/src/CodeReviewQueue.php', '/src/CodeReviewQueue.php');
+echo "  Added: /src/CodeReviewQueue.php\n";
+
+// Add vendor directory (dependencies)
+$vendorDir = $baseDir . '/vendor';
+if (is_dir($vendorDir)) {
+    echo "Adding vendor dependencies...\n";
+
+    // Add vendor/autoload.php
+    addFileToPhar($phar, $vendorDir . '/autoload.php', '/vendor/autoload.php');
+    echo "  Added: vendor/autoload.php\n";
+
+    // Add vendor/composer directory
+    $composerDir = $vendorDir . '/composer';
+    if (is_dir($composerDir)) {
+        $count = addDirectoryToPhar($phar, $composerDir, '/vendor/composer');
+        echo "  Added {$count} files from vendor/composer\n";
+    }
+
+    // Add all vendor packages to ensure all dependencies are included
+    $vendorPackages = [
+        'symfony/console',
+        'symfony/polyfill-ctype',
+        'symfony/polyfill-mbstring',
+        'symfony/polyfill-intl-grapheme',
+        'symfony/polyfill-intl-normalizer',
+        'predis/predis',
+        'vlucas/phpdotenv',
+        'phpoption/phpoption',
+        'symfony/deprecation-contracts',
+        'psr/container',
+        'psr/log',
+        'symfony/string',
+        'symfony/polyfill-php80',
+    ];
+
+    foreach ($vendorPackages as $package) {
+        $packagePath = $vendorDir . '/' . $package;
+        if (is_dir($packagePath)) {
+            $count = addDirectoryToPhar($phar, $packagePath, '/vendor/' . $package);
+            if ($count > 0) {
+                echo "  Added {$count} files from vendor/{$package}\n";
+            }
+        }
+    }
+
+    // Also add any remaining vendor packages not explicitly listed
+    $handle = opendir($vendorDir);
+    if ($handle) {
+        while (($item = readdir($handle)) !== false) {
+            if ($item[0] === '.') continue;
+            $itemPath = $vendorDir . '/' . $item;
+            if (is_dir($itemPath) && !in_array($item, $vendorPackages, true)) {
+                $count = addDirectoryToPhar($phar, $itemPath, '/vendor/' . $item);
+                if ($count > 0) {
+                    echo "  Added {$count} files from vendor/{$item}\n";
+                }
+            }
+        }
+        closedir($handle);
+    }
+} else {
+    echo "WARNING: Vendor directory not found. Run 'composer install' first.\n";
+}
+
+// Add the entry point
+addFileToPhar($phar, $baseDir . '/bin/github-review', '/bin/github-review');
+echo "  Added: bin/github-review\n";
+
+// Add config directory if it exists
+$configDir = $baseDir . '/config';
+if (is_dir($configDir)) {
+    $count = addDirectoryToPhar($phar, $configDir, '/config');
+    echo "Added {$count} files from config/\n";
+}
+
+$phar->stopBuffering();
+
+// Set PHAR metadata
+$phar->setMetadata([
+    'version' => '1.0.0',
+    'built-at' => date('c'),
+    'built-with-php' => PHP_VERSION,
+    'description' => 'GitHub Code Review CLI Tool',
+    'entry-point' => 'bin/github-review',
+]);
+
+// Compress the PHAR (requires php.zlib)
+if (extension_loaded('zlib')) {
+    $phar->compressFiles(Phar::GZ);
+    echo "Compressed PHAR with gzip\n";
+}
+
+// Sign the PHAR if requested
+if (isset($options['sign'])) {
+    if (file_exists($privateKey)) {
+        echo "Signing PHAR with private key: {$privateKey}\n";
+        $privateKeyContent = file_get_contents($privateKey);
+        $keyResource = openssl_pkey_get_private($privateKeyContent);
+
+        if ($keyResource === false) {
+            echo "ERROR: Could not load private key from {$privateKey}\n";
+            exit(1);
+        }
+
+        $keyDetails = openssl_pkey_get_details($keyResource);
+        $signature = '';
+
+        // Create a signature of the PHAR
+        $pharFileContent = file_get_contents($pharFile);
+        openssl_sign($pharFileContent, $signature, $keyResource, OPENSSL_ALGO_SHA256);
+
+        // Create a signature file
+        $sigFile = $pharFile . '.sig';
+        file_put_contents($sigFile, base64_encode($signature));
+        echo "Signature saved to: {$sigFile}\n";
+
+        // Also create a public key file for verification
+        if (isset($keyDetails['key'])) {
+            $pubKeyFile = $pharFile . '.pubkey';
+            file_put_contents($pubKeyFile, $keyDetails['key']);
+            echo "Public key saved to: {$pubKeyFile}\n";
+        }
+
+        echo "PHAR signed successfully!\n";
+    } else {
+        echo "WARNING: Private key not found at {$privateKey}\n";
+        echo "         Skipping signature (use --sign to sign the PHAR)\n";
+    }
+}
+
+// Verify the PHAR
+echo "\nVerifying PHAR archive...\n";
+try {
+    $signature = $phar->getSignature();
+    echo "PHAR signature OK!\n";
+    echo "  Hash: {$signature['hash']}\n";
+    echo "  Algorithm: {$signature['hash_type']}\n";
+} catch (Exception $e) {
+    echo "WARNING: Could not verify PHAR signature: " . $e->getMessage() . "\n";
+}
+
+$pharSize = filesize($pharFile);
+echo "\nBuild complete!\n";
+echo "  Output: {$pharFile}\n";
+echo "  Size: " . number_format($pharSize) . " bytes\n";
+echo "\nTo install globally:\n";
+echo "  sudo mv {$pharFile} /usr/local/bin/github-review\n";
+echo "  sudo chmod +x /usr/local/bin/github-review\n";
+echo "\nTo verify the PHAR:\n";
+echo "  php -r \"echo 'PHAR loaded: ' . (Phar::loadPhar('{$pharFile}') ? 'OK' : 'FAILED') . PHP_EOL;\"\n";

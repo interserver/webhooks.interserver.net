@@ -1,0 +1,70 @@
+<?php
+declare(strict_types=1);
+
+/**
+ * GitHub Review CLI Configuration Template
+ *
+ * Copy this file to config/review-cli.php and fill in your values.
+ * The review-cli.php file is gitignored - your settings will not be committed.
+ *
+ * Configuration priority (lowest to highest):
+ * 1. System config (/etc/github-review/config.php)
+ * 2. User config (~/.config/github-review/config.php)
+ * 3. Project config (./config/review-cli.php)
+ * 4. Environment variables
+ * 5. CLI arguments
+ *
+ * All values can be overridden via environment variables:
+ * - GITHUB_TOKEN
+ * - REDIS_HOST, REDIS_PORT
+ * - CHECKOUT_ROOT
+ * - OPENCODE_ANALYZE_CMD, OPENCODE_IMPROVE_CMD
+ * - CLI_NON_INTERACTIVE
+ */
+
+return [
+    // GitHub authentication
+    // Can also be set via GITHUB_TOKEN environment variable
+    'github' => [
+        'token' => '', // e.g., 'ghp_xxxxxxxxxxxx'
+    ],
+
+    // Redis connection for queue operations
+    'redis' => [
+        'host' => '67.217.60.234',
+        'port' => 6379,
+    ],
+
+    // Checkout directory settings
+    'checkout' => [
+        'root' => '/tmp/pr-checkouts',       // Where PRs are cloned for review
+        'cleanup_after' => 3600,             // Seconds before auto-cleanup of stale checkouts
+    ],
+
+    // OpenCode CLI command templates
+    // Placeholders: {dir}, {file}, {line}
+    'opencode' => [
+        'analyze_cmd' => 'opencode analyze --dir {dir} --output json',
+        'improve_cmd' => 'opencode improve --dir {dir} --file {file} --line {line} --output json',
+    ],
+
+    // List of repositories to work with
+    // Use 'owner/repo' format
+    'repositories' => [
+        // 'owner/repo1',
+        // 'owner/repo2',
+    ],
+
+    // Default settings for review operations
+    'defaults' => [
+        // Audit types to run: 'full' or comma-separated list
+        // Options: security, performance, documentation, logic, style
+        'audit_types' => 'full',
+
+        // Minimum severity to report: error, warning, info
+        'severity' => 'warning',
+
+        // Whether to post a summary comment after review
+        'post_summary' => true,
+    ],
+];

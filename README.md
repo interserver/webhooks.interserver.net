@@ -240,6 +240,297 @@ Log verbosity controlled by `LOG_LEVEL` env var:
 
 ---
 
+## GitHub Review CLI
+
+A command-line tool for managing code reviews of GitHub Pull Requests.
+
+### Installation
+
+#### Option 1: PHAR Distribution (Recommended)
+
+Download the pre-built PHAR archive and install it system-wide:
+
+```bash
+# Download the latest PHAR from the releases page
+# or build it yourself: php bin/build-phar
+
+# Install globally on Linux/macOS
+sudo mv github-review.phar /usr/local/bin/github-review
+sudo chmod +x /usr/local/bin/github-review
+
+# Verify installation
+github-review --version
+```
+
+**System Requirements:**
+- PHP 7.4 or higher
+- PHP extensions: phar, openssl (for signing), zlib (for compression)
+
+#### Option 2: Composer Installation
+
+```bash
+# Clone the repository
+git clone https://github.com/interserver/webhooks.interserver.net.git
+cd webhooks.interserver.net
+
+# Install dependencies
+composer install
+
+# Make the CLI executable
+chmod +x bin/github-review
+
+# Run directly
+bin/github-review --help
+
+# Or run via composer
+composer exec github-review
+```
+
+#### Option 3: Build PHAR from Source
+
+```bash
+# Clone and install dependencies
+git clone https://github.com/interserver/webhooks.interserver.net.git
+cd webhooks.interserver.net
+composer install
+
+# Build the PHAR
+php -d phar.readonly=0 bin/build-phar
+
+# The PHAR will be at build/github-review.phar
+
+# Optional: Sign the PHAR
+openssl genpkey -algorithm RSA -out private.key
+php -d phar.readonly=0 bin/build-phar --sign
+
+# Install the built PHAR
+sudo mv build/github-review.phar /usr/local/bin/github-review
+sudo chmod +x /usr/local/bin/github-review
+```
+
+### Quick Start
+
+```bash
+# List queued review jobs
+bin/github-review list
+
+# Show queue statistics
+bin/github-review metrics
+
+# Submit a PR for review
+bin/github-review submit owner/repo --pr 42
+
+# Check review status
+bin/github-review status --repo owner/repo
+
+# View help
+bin/github-review --help
+```
+
+### Commands
+
+#### `list` - List Queue Jobs
+
+List pending code review jobs in the Redis queue.
+
+```bash
+bin/github-review list
+bin/github-review list --limit 20
+bin/github-review list --repo owner/repo
+bin/github-review list --event-type pull_request --action opened
+bin/github-review list --json
+```
+
+Options:
+- `-l, --limit N` — Show at most N entries (default: 50)
+- `-r, --repo OWNER/REPO` — Filter by repository
+- `-e, --event-type TYPE` — Filter by source type (push, pr, check_run, etc.)
+- `-a, --action ACTION` — Filter by action (opened, synchronize, closed)
+- `--json` — Output as JSON
+- `-d, --detailed` — Include id and PR URL in output
+
+#### `metrics` - Queue Statistics
+
+Show queue statistics and processing metrics.
+
+```bash
+bin/github-review metrics
+bin/github-review metrics --json
+```
+
+#### `submit` - Submit PR for Review
+
+Submit a Pull Request for code review analysis.
+
+```bash
+bin/github-review submit owner/repo --pr 42
+bin/github-review submit owner/repo 42           # Short form
+bin/github-review submit owner/repo --all        # All open PRs
+bin/github-review submit owner/repo --pr 42 --audit-types security,performance
+bin/github-review submit owner/repo --pr 42 --severity error
+```
+
+Options:
+- `repo` — Repository in owner/repo format (first argument)
+- `pr` — PR number (second argument or `--pr` option)
+- `-t, --audit-types TYPES` — Comma-separated audit types (security,performance,documentation,logic,style,full)
+- `-s, --severity LEVEL` — Minimum severity (error, warning, info)
+- `--no-security`, `--no-performance`, `--no-documentation`, `--no-logic`, `--no-style` — Disable specific audits
+- `--post-diffs` — Post inline diff of suggested fixes as PR review comments
+- `--post-branch` — Create a branch with suggested fixes (mutually exclusive with --post-diffs)
+- `--split-changes` — Split changes into multiple PRs by file/audit-type
+- `--split-by STRATEGY` — Split strategy: file, audit, severity, size
+- `--dry-run` — Preview without submitting
+- `-w, --wait` — Wait for completion
+
+#### `status` - Check Review Status
+
+Check the status of a review job.
+
+```bash
+bin/github-review status --id abc-123
+bin/github-review status --repo owner/repo --pr 42
+bin/github-review status --watch
+```
+
+Options:
+- `-i, --id UUID` — Check specific job by ID
+- `-r, --repo OWNER/REPO` — Filter by repository
+- `-p, --pr NUMBER` — Filter by PR number
+- `--json` — Output as JSON
+- `-w, --watch` — Poll for updates continuously
+
+#### `cancel` - Cancel Jobs
+
+Cancel queued or processing review jobs.
+
+```bash
+bin/github-review cancel --id abc-123
+bin/github-review cancel --all
+```
+
+Options:
+- `-i, --id UUID` — Cancel specific job by ID
+- `--all` — Clear entire queue
+
+#### `config` - Configuration Management
+
+Manage CLI configuration.
+
+```bash
+bin/github-review config --list
+bin/github-review config --add-repo owner/repo
+bin/github-review config --set-token
+```
+
+Options:
+- `-l, --list` — List current configuration
+- `--add-repo OWNER/REPO` — Add repository to watch list
+- `--remove-repo OWNER/REPO` — Remove repository
+- `--set-token` — Set/update GitHub token
+- `--set-checkout-root PATH` — Set checkout directory
+- `--reset` — Reset to defaults
+
+### Global Options
+
+- `-h, --help` — Show help message
+- `-V, --version` — Show version
+- `-v, --verbose` — Increase verbosity (stackable: `-vvv`)
+- `-q, --quiet` — Suppress output
+- `--json` — Output as JSON (for scripting)
+- `--debug` — Show debug information
+- `-n, --non-interactive` — Non-interactive mode (disables prompting)
+
+### Configuration
+
+Configuration is loaded from multiple sources in order of priority (highest last):
+
+1. **System config** — `/etc/github-review/config.php`
+2. **User config** — `~/.config/github-review/config.php`
+3. **Project config** — `./config/review-cli.php`
+4. **Environment variables**
+5. **CLI arguments**
+
+#### Configuration File Template
+
+Copy `config/review-cli.php.dist` to `config/review-cli.php`:
+
+```php
+<?php
+return [
+    'github' => [
+        'token' => 'ghp_xxxx',  // Or use GITHUB_TOKEN env var
+    ],
+    'redis' => [
+        'host' => '67.217.60.234',
+        'port' => 6379,
+    ],
+    'checkout' => [
+        'root' => '/tmp/pr-checkouts',
+        'cleanup_after' => 3600,
+    ],
+    'opencode' => [
+        'analyze_cmd' => 'opencode analyze --dir {dir} --output json',
+        'improve_cmd' => 'opencode improve --dir {dir} --file {file} --line {line} --output json',
+    ],
+    'repositories' => [
+        'owner/repo1',
+        'owner/repo2',
+    ],
+    'defaults' => [
+        'audit_types' => 'full',
+        'severity' => 'warning',
+        'post_summary' => true,
+    ],
+];
+```
+
+#### Environment Variables
+
+Any config value can be overridden via environment variables:
+
+| Variable | Description |
+|----------|-------------|
+| `GITHUB_TOKEN` | GitHub personal access token |
+| `REDIS_HOST` | Redis server host |
+| `REDIS_PORT` | Redis server port |
+| `CHECKOUT_ROOT` | Checkout directory for PRs |
+| `OPENCODE_ANALYZE_CMD` | OpenCode analyze command template |
+| `OPENCODE_IMPROVE_CMD` | OpenCode improve command template |
+| `CLI_NON_INTERACTIVE` | Force non-interactive mode |
+
+### Interactive Mode
+
+When running without a TTY (cron jobs, CI/CD pipelines) or with `--non-interactive` flag, the CLI:
+
+- Requires all parameters via flags/arguments
+- Fails on first error
+- Uses JSON output for scripting
+- Disables progress bars
+
+When running interactively, the CLI:
+
+- Shows colored tables
+- Enables progress bars
+- Offers interactive prompts for missing arguments
+- Provides suggestions and defaults
+
+### Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Success |
+| 1 | General error |
+| 2 | Invalid arguments |
+| 3 | Not found |
+| 4 | Validation error |
+| 5 | Redis error |
+| 6 | GitHub API error |
+| 7 | Checkout error |
+| 8 | Timeout |
+
+---
+
 ## GitHubWebhook Class
 
 ```php

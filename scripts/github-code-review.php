@@ -875,7 +875,8 @@ function parseImproveOutput(string $rawOutput, string $file, string $originalCon
         }
 
         if (($event['type'] ?? '') === 'text') {
-            $text = $event['part']['text'] ?? '';
+            $part = $event['part'] ?? [];
+            $text = is_array($part) ? ($part['text'] ?? '') : '';
             $fullText .= $text . "\n";
 
             if (preg_match('/```(?:json|php)?\s*(\{[\s\S]*?\})\s*```/', $text, $matches)) {
@@ -1214,6 +1215,12 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate): s
     $ret = 0;
     exec($opencodeCmd, $output, $ret);
 
+    global $running;
+    if (!$running) {
+        verbose_log("runOpencodeAnalysis: shutdown requested during exec, discarding output", 2);
+        return '';
+    }
+
     $result = implode("\n", $output);
     verbose_log("runOpencodeAnalysis: completed, output length=" . strlen($result), 3);
 
@@ -1259,7 +1266,8 @@ function parseAnalysisOutput(string $rawOutput): array
         }
 
         if (($event['type'] ?? '') === 'text') {
-            $text = $event['part']['text'] ?? '';
+            $part = $event['part'] ?? [];
+            $text = is_array($part) ? ($part['text'] ?? '') : '';
             $fullText .= $text . "\n";
 
             if (preg_match('/```json\s*(\[[\s\S]*?\]|\{[\s\S]*?\})\s*```/', $text, $matches)) {
@@ -1358,7 +1366,7 @@ function parseMarkdownIssues(string $text): array
             continue;
         }
 
-        if (preg_match('/^#{1,6}\s*([🔴🟠🟡🟢])\s+(.+?)(?:[\s—–-]+([^:\s]+):(\d+))?$/', $line, $matches)) {
+        if (preg_match('/^#{1,6}\s*([🔴🟠🟡🟢])\s+(.+?)(?:[\s—–-]+([^:\s]+):(\d+))?$/u', $line, $matches)) {
             if ($currentIssue !== null && !empty($currentDescription)) {
                 $currentIssue['message'] = trim(implode("\n", $currentDescription));
                 if ($currentIssue['message'] !== '') {
@@ -1374,13 +1382,14 @@ function parseMarkdownIssues(string $text): array
             $currentIssue = [
                 'file' => $file,
                 'line' => $lineNum,
-                'severity' => $severityMap[$emoji] ?? 'minor',
+                // @phpstan-ignore-line array_access.offsetAlwaysExists
+                'severity' => $severityMap[$emoji],
                 'message' => $title,
                 'title' => $title,
             ];
             $currentDescription = [];
         } elseif ($currentIssue !== null) {
-            if (preg_match('/^#{1,6}\s+[^🔴🟠🟡🟢]/', $line)) {
+            if (preg_match('/^#{1,6}\s+[^🔴🟠🟡🟢]/u', $line)) {
                 $currentIssue['message'] = trim(implode("\n", $currentDescription));
                 if ($currentIssue['message'] !== '') {
                     $issues[] = $currentIssue;

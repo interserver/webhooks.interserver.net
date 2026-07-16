@@ -25,6 +25,55 @@ php scripts/github-code-review.php
 - **Quality**: `phpstan.neon` · `phpstan-bootstrap.php` · `.php-cs-fixer.dist.php` (PSR2 + PHP74Migration)
 - **CI**: `.github/` — GitHub Actions workflows (`.github/workflows/ci.yml`)
 
+## GitHub Review CLI
+
+The `github-review` CLI tool manages code reviews of GitHub Pull Requests.
+
+### CLI Commands
+
+```bash
+# Build PHAR distribution
+php -d phar.readonly=0 bin/build-phar
+
+# Run CLI directly
+bin/github-review --version
+bin/github-review list --help
+bin/github-review metrics
+bin/github-review submit --help
+
+# Run via PHAR
+php -d phar.readonly=0 build/github-review.phar --version
+```
+
+### CLI Source Files
+
+- **Entry point**: `bin/github-review`
+- **Application**: `src/Cli/Application.php`
+- **Commands**: `src/Cli/Command/`
+  - `ListCommand.php` — List queued review jobs
+  - `MetricsCommand.php` — Show queue statistics
+  - `SubmitCommand.php` — Submit PR for review
+  - `StatusCommand.php` — Check review status
+  - `CancelCommand.php` — Cancel queued jobs
+  - `ConfigCommand.php` — Manage configuration
+- **Services**: `src/Cli/Service/`
+  - `CodeAnalyzer.php` — OpenCode integration
+  - `CheckoutManager.php` — Git checkout management
+  - `DiffGenerator.php` — Diff generation
+  - `ReviewPoster.php` — GitHub API posting
+- **Config**: `src/Cli/Config/ConfigLoader.php`
+- **Renderers**: `src/Cli/Renderer/`
+  - `JsonRenderer.php` — JSON output
+  - `TableRenderer.php` — Table output
+- **Interactor**: `src/Cli/Interactor/InteractiveInteractor.php`
+
+### CLI Tests
+
+```bash
+vendor/bin/phpstan analyse src/Cli/ --level=8
+vendor/bin/phpunit tests/phpunit/unit/Cli/ --testdox
+```
+
 ## Event Handling Pattern
 
 All event handling lives in `web/github.php`:
