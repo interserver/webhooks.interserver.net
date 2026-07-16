@@ -293,7 +293,7 @@ class ParsingFunctionsTest extends TestCase
         $issues = $this->parseMarkdownIssues($markdown);
 
         $this->assertCount(1, $issues, 'Should find one issue');
-        $this->assertSame('The issue description\nspans multiple lines\nand has important details.', $issues[0]['message']);
+        $this->assertSame("The issue description\nspans multiple lines\nand has important details.", $issues[0]['message']);
     }
 
     public function testParseMarkdownIssuesWithoutFileLine(): void
