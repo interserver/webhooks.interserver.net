@@ -1367,12 +1367,16 @@ function parseMarkdownIssues(string $text): array
         }
 
         if (preg_match('/^#{1,6}\s*([🔴🟠🟡🟢])\s+(.+?)(?:[\s—–-]+([^:\s]+):(\d+))?$/u', $line, $matches)) {
-            if ($currentIssue !== null && !empty($currentDescription)) {
-                $currentIssue['message'] = trim(implode("\n", $currentDescription));
-                if ($currentIssue['message'] !== '') {
-                    $issues[] = $currentIssue;
-                }
-            }
+            // Save previous issue (if any) before starting new one
+    if ($currentIssue !== null) {
+        // Only overwrite message with description if there IS a description; otherwise keep title
+        if (!empty($currentDescription)) {
+            $currentIssue['message'] = trim(implode("\n", $currentDescription));
+        }
+        if ($currentIssue['message'] !== '') {
+            $issues[] = $currentIssue;
+        }
+    }
 
             $emoji = $matches[1];
             $title = trim($matches[2]);
@@ -1390,7 +1394,9 @@ function parseMarkdownIssues(string $text): array
             $currentDescription = [];
         } elseif ($currentIssue !== null) {
             if (preg_match('/^#{1,6}\s+[^🔴🟠🟡🟢]/u', $line)) {
-                $currentIssue['message'] = trim(implode("\n", $currentDescription));
+                if (!empty($currentDescription)) {
+                    $currentIssue['message'] = trim(implode("\n", $currentDescription));
+                }
                 if ($currentIssue['message'] !== '') {
                     $issues[] = $currentIssue;
                 }
@@ -1405,8 +1411,10 @@ function parseMarkdownIssues(string $text): array
         }
     }
 
-    if ($currentIssue !== null && !empty($currentDescription)) {
-        $currentIssue['message'] = trim(implode("\n", $currentDescription));
+    if ($currentIssue !== null) {
+        if (!empty($currentDescription)) {
+            $currentIssue['message'] = trim(implode("\n", $currentDescription));
+        }
         if ($currentIssue['message'] !== '') {
             $issues[] = $currentIssue;
         }
