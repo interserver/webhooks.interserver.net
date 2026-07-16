@@ -265,27 +265,28 @@ function applyPRDiff(string $checkoutPath, ?string $diff): bool
         file_put_contents($diffFile, $diffNormalized);
 
         // Try multiple strategies in order of preference
+        // Strategy order: most reliable first, least desperate last
         $strategies = [
-            // Strategy 1: Strict apply with ignore-whitespace (covers most real diffs)
-            [
-                'cmd' => 'git apply --whitespace=nowarn --ignore-whitespace %s 2>&1',
-                'label' => 'ignore-whitespace',
-            ],
-            // Strategy 2: 3-way merge fallback - applies partial diff using index info
-            [
-                'cmd' => 'git apply --3way --whitespace=nowarn %s 2>&1',
-                'label' => '3way-merge',
-            ],
-            // Strategy 3: patch command (more lenient than git apply for complex diffs)
+            // Strategy 1: patch command first - most lenient, handles binary files, long lines, etc.
             [
                 'cmd' => 'patch -p1 --no-backup-if-mismatch --dry-run < %s 2>&1 && patch -p1 --no-backup-if-mismatch < %s',
                 'label' => 'patch-dryrun-then-apply',
                 'doubleFile' => true,
             ],
-            // Strategy 4: git apply with --whitespace=fix (auto-fix whitespace)
+            // Strategy 2: git apply with --binary (required for binary file changes)
+            [
+                'cmd' => 'git apply --binary --3way --whitespace=nowarn %s 2>&1',
+                'label' => 'git-apply-binary-3way',
+            ],
+            // Strategy 3: git apply binary without 3way (pure binary apply)
+            [
+                'cmd' => 'git apply --binary --whitespace=nowarn --ignore-whitespace %s 2>&1',
+                'label' => 'git-apply-binary-ignorews',
+            ],
+            // Strategy 4: git apply with --whitespace=fix (auto-fix whitespace issues)
             [
                 'cmd' => 'git apply --whitespace=fix %s 2>&1',
-                'label' => 'whitespace-fix',
+                'label' => 'git-apply-whitespace-fix',
             ],
         ];
 
