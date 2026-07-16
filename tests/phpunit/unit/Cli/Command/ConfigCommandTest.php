@@ -54,12 +54,12 @@ class ConfigCommandTest extends TestCase
 
         $exitCode = $commandTester->execute([
             '--set-key' => 'invalid-format-without-equals',
-        ], ['capture_stderr_separately' => true]);
+        ]);
 
         $this->assertSame(Command::FAILURE, $exitCode);
         $this->assertStringContainsString(
             'Invalid format',
-            $commandTester->getErrorOutput()
+            $commandTester->getDisplay()
         );
     }
 
@@ -71,12 +71,12 @@ class ConfigCommandTest extends TestCase
 
         $exitCode = $commandTester->execute([
             '--set-key' => '=somevalue',
-        ], ['capture_stderr_separately' => true]);
+        ]);
 
         $this->assertSame(Command::FAILURE, $exitCode);
         $this->assertStringContainsString(
             'Key cannot be empty',
-            $commandTester->getErrorOutput()
+            $commandTester->getDisplay()
         );
     }
 
@@ -101,12 +101,12 @@ class ConfigCommandTest extends TestCase
 
         $exitCode = $commandTester->execute([
             '--reset' => 'nonexistent.key',
-        ], ['capture_stderr_separately' => true]);
+        ]);
 
         $this->assertSame(Command::FAILURE, $exitCode);
         $this->assertStringContainsString(
             'Unknown configuration key',
-            $commandTester->getErrorOutput()
+            $commandTester->getDisplay()
         );
     }
 

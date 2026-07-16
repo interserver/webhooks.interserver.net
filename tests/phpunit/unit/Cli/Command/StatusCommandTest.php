@@ -41,12 +41,12 @@ class StatusCommandTest extends TestCase
 
         $exitCode = $commandTester->execute([
             '--watch' => true,
-        ], ['capture_stderr_separately' => true]);
+        ]);
 
         $this->assertSame(Command::FAILURE, $exitCode);
         $this->assertStringContainsString(
             '--watch requires --id',
-            $commandTester->getErrorOutput()
+            $commandTester->getDisplay()
         );
     }
 

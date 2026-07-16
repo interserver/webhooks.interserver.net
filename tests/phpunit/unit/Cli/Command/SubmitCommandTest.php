@@ -62,12 +62,12 @@ class SubmitCommandTest extends TestCase
             '--pr' => '42',
             '--post-diffs' => true,
             '--post-branch' => true,
-        ], ['capture_stderr_separately' => true]);
+        ]);
 
         $this->assertSame(Command::FAILURE, $exitCode);
         $this->assertStringContainsString(
             'mutually exclusive',
-            $commandTester->getErrorOutput()
+            $commandTester->getDisplay()
         );
     }
 
@@ -82,12 +82,12 @@ class SubmitCommandTest extends TestCase
             '--pr' => '42',
             '--split-changes' => true,
             '--combine' => true,
-        ], ['capture_stderr_separately' => true]);
+        ]);
 
         $this->assertSame(Command::FAILURE, $exitCode);
         $this->assertStringContainsString(
             'mutually exclusive',
-            $commandTester->getErrorOutput()
+            $commandTester->getDisplay()
         );
     }
 

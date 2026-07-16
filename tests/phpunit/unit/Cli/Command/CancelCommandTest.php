@@ -39,12 +39,12 @@ class CancelCommandTest extends TestCase
         $command = $application->find('cancel');
         $commandTester = new CommandTester($command);
 
-        $exitCode = $commandTester->execute([], ['capture_stderr_separately' => true]);
+        $exitCode = $commandTester->execute([]);
 
         $this->assertSame(Command::FAILURE, $exitCode);
         $this->assertStringContainsString(
             'Specify --id, --repo, or --all',
-            $commandTester->getErrorOutput()
+            $commandTester->getDisplay()
         );
     }
 
@@ -57,12 +57,12 @@ class CancelCommandTest extends TestCase
         $exitCode = $commandTester->execute([
             '--all' => true,
             '--repo' => 'owner/repo',
-        ], ['capture_stderr_separately' => true]);
+        ]);
 
         $this->assertSame(Command::FAILURE, $exitCode);
         $this->assertStringContainsString(
             'mutually exclusive',
-            $commandTester->getErrorOutput()
+            $commandTester->getDisplay()
         );
     }
 
@@ -77,7 +77,7 @@ class CancelCommandTest extends TestCase
 
         $exitCode = $commandTester->execute([
             '--all' => true,
-        ], ['capture_stderr_separately' => true]);
+        ]);
 
         // Restore environment
         putenv('REDIS_HOST');
