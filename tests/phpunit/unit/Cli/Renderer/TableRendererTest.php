@@ -226,8 +226,8 @@ class TableRendererTest extends TestCase
         $this->renderer->renderStatusItem($output, $status);
 
         $content = $output->fetch();
-        // Error severity should show red circle emoji
-        $this->assertStringContainsString("\xE2\x9D\x94", $content);
+        // Error severity should show red circle emoji (U+1F534)
+        $this->assertStringContainsString("\xF0\x9F\x94\xB4", $content);
     }
 
     public function testStatusIcons(): void

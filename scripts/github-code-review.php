@@ -1049,7 +1049,7 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
     verbose_log("checkoutBranch: repo={$repo} branch={$branch} path={$checkoutPath}", 3);
 
     // Validate repo format to prevent path traversal
-    if (!preg_match('/^[a-zA-Z0-9_-]+\/[a-zA-Z0-9_-]+$/', $repo)) {
+    if (!preg_match('/^[a-zA-Z0-9_.\/-]+\/[a-zA-Z0-9_.\/-]+$/', $repo)) {
         verbose_log("checkoutBranch: invalid repo format: {$repo}", 1);
         return 'invalid repo format';
     }
