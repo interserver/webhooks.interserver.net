@@ -33,7 +33,7 @@ class BaseBranchFallbackTest extends TestCase
         $checkoutCalls = [];
         $running = true;
 
-        $mockCheckoutBranch = function(string $repo, string $branch, string $path) use (&$checkoutCalls, &$running): string {
+        $mockCheckoutBranch = function(string $repo, string $branch, string $path) use (&$checkoutCalls): string {
             $checkoutCalls[] = ['repo' => $repo, 'branch' => $branch, 'path' => $path];
             if ($branch === 'main') {
                 return 'gh repo clone failed: main branch not found';
@@ -44,10 +44,7 @@ class BaseBranchFallbackTest extends TestCase
             return 'unknown branch';
         };
 
-        $mockGetPRBaseBranch = function(string $repo, int $prNumber) use (&$running): ?string {
-            if (!$running) {
-                return null;
-            }
+        $mockGetPRBaseBranch = function(string $repo, int $prNumber): string {
             return 'master';
         };
 
@@ -86,7 +83,7 @@ class BaseBranchFallbackTest extends TestCase
             return 'gh repo clone failed: branch not found';
         };
 
-        $mockGetPRBaseBranch = function(string $repo, int $prNumber): ?string {
+        $mockGetPRBaseBranch = function(string $repo, int $prNumber): string {
             return 'master';
         };
 
@@ -124,7 +121,7 @@ class BaseBranchFallbackTest extends TestCase
             return 'true';
         };
 
-        $mockGetPRBaseBranch = function(string $repo, int $prNumber) use (&$getPRBaseBranchCalls): ?string {
+        $mockGetPRBaseBranch = function(string $repo, int $prNumber) use (&$getPRBaseBranchCalls): string {
             $getPRBaseBranchCalls[] = ['repo' => $repo, 'prNumber' => $prNumber];
             return 'master';
         };
@@ -164,7 +161,7 @@ class BaseBranchFallbackTest extends TestCase
             return 'shutdown';
         };
 
-        $mockGetPRBaseBranch = function(string $repo, int $prNumber) use (&$getPRBaseBranchCalls): ?string {
+        $mockGetPRBaseBranch = function(string $repo, int $prNumber) use (&$getPRBaseBranchCalls): string {
             $getPRBaseBranchCalls[] = ['repo' => $repo, 'prNumber' => $prNumber];
             return 'master';
         };
@@ -244,7 +241,7 @@ class BaseBranchFallbackTest extends TestCase
             return 'gh repo clone failed: main branch not found';
         };
 
-        $mockGetPRBaseBranch = function(string $repo, int $prNumber): ?string {
+        $mockGetPRBaseBranch = function(string $repo, int $prNumber): string {
             return 'main';
         };
 

@@ -6,20 +6,29 @@ declare(strict_types=1);
  *
  * Processes jobs from the codereview:queue Redis list.
  * For each job:
- *   1. Checkout the PR's head branch
- *   2. Run opencode analyze on the checkout
- *   3. For each issue found:
- *      a. Run opencode improve to generate a fix
- *      b. Generate a git diff for that file
- *      c. Post a PR comment with the issue + inline diff
+ *   1. Checkout the PR base branch, apply the PR diff, and commit it as a
+ *      snapshot (HEAD = base+PR, _base ref = base commit)
+ *   2. Run opencode once to review AND fix the PR changes in place; the agent's
+ *      edits stay uncommitted in the working tree
+ *   3. Capture the agent's fixes with `git diff` (working tree vs the snapshot)
+ *   4. For each issue found, post a PR comment — with the per-file fix diff when
+ *      the agent edited that file, otherwise flag-only
  *
  * Usage:
- *   php scripts/github-code-review.php [-v|--verbose]...
+ *   php scripts/github-code-review.php [-v|--verbose]... [-a|--show-agent]
  *
  * Verbose levels:
- *   -v   [INFO]   Essential progress (job start/complete/errors)
- *   -vv  [DEBUG]  Detailed progress (checkpoints, function entry)
- *   -vvv [TRACE]  Full trace (loop iterations, issue details)
+ *   -v    [INFO]   Essential progress (job start/complete/errors)
+ *   -vv   [DEBUG]  Detailed progress (checkpoints, function entry)
+ *   -vvv  [TRACE]  Full trace (loop iterations, issue details)
+ *   -vvvv [RAW]    Everything, plus live opencode streaming (implies -a)
+ *
+ * -a / --show-agent streams opencode output (--format default plain text and
+ * --format json NDJSON events) to the console in real-time at any verbosity.
+ *
+ * Ctrl-C once: graceful shutdown — the in-flight opencode process group is
+ * terminated, the job is requeued, and the worker exits.
+ * Ctrl-C twice: force quit immediately.
  *
  * Run as a systemd service or cron loop:
  *   while true; do php scripts/github-code-review.php; sleep 1; done
@@ -35,63 +44,95 @@ if (file_exists($envFile)) {
     $dotenv->load();
 }
 
-// === Verbose Logging ===
-$verbose = 0;
-$running = true;
-$logFile = null;
-$optind = 0;
-$args = getopt('vhwb:a:', ['verbose', 'help', 'wait-if-empty', 'review-bots', 'show-agent', 'show-all-issues', 'timeout:', 'log::'], $optind);
-if (isset($args['h']) || isset($args['help'])) {
-    fwrite(STDOUT, "Usage: php scripts/github-code-review.php [-v|--verbose]... [-w|--wait-if-empty] [-b|--review-bots] [-a|--show-agent] [--show-all-issues] [--timeout=30m] [--log=FILE]\n");
-    fwrite(STDOUT, "  -v, --verbose      Increase verbosity (can stack: -vv, -vvv, -vvvv)\n");
-    fwrite(STDOUT, "    -v   [INFO]     Essential progress (job start/complete/errors)\n");
-    fwrite(STDOUT, "    -vv  [DEBUG]    Detailed progress (checkpoints, function entry)\n");
-    fwrite(STDOUT, "    -vvv [TRACE]    Full trace (loop iterations, gh commands)\n");
-    fwrite(STDOUT, "    -vvvv [RAW]     Everything: raw gh output, API responses, full command output\n");
-    fwrite(STDOUT, "  -w, --wait-if-empty  Wait for jobs when queue is empty (default: exit)\n");
-    fwrite(STDOUT, "  -b, --review-bots    Also review PRs from bots like dependabot (default: skip)\n");
-    fwrite(STDOUT, "  -a, --show-agent      Stream opencode agent messages in real-time (colorized at -vvvv)\n");
-    fwrite(STDOUT, "  --show-all-issues     Include issues without file/line in report (default: skip summary sections)\n");
-    fwrite(STDOUT, "  --timeout=N           Timeout for opencode analysis (default: 30m). Examples: 30, 30s, 30m\n");
-    fwrite(STDOUT, "  --log=FILE            Append all log output to FILE (in addition to stderr)\n");
-    fwrite(STDOUT, "  -h, --help        Show this help message\n");
-    fwrite(STDOUT, "\n  Press Ctrl-C to exit gracefully at any time.\n");
-    exit(0);
-}
-if (isset($args['v'])) {
-    $verbose = min(4, $verbose + count((array)$args['v']));
-}
-if (isset($args['verbose'])) {
-    $verbose = min(4, $verbose + count((array)$args['verbose']));
-}
-$waitIfEmpty = isset($args['w']) || isset($args['wait-if-empty']);
-$reviewBots = isset($args['b']) || isset($args['review-bots']);
-$showAgent = isset($args['a']) || isset($args['show-agent']);
-$showAllIssues = isset($args['show-all-issues']);
+// === Runtime bootstrap ===
+// When this file is include()d (e.g. from PHPUnit), only define functions and
+// globals — do not parse argv, contact gh/Redis, or start the worker.
+// Assign defaults via $GLOBALS so an include from inside a function (PHPUnit
+// setUp) still initializes the real globals used by verbose_log() and friends.
+$__directRun = (get_included_files()[0] ?? '') === __FILE__;
 
-// Parse timeout: bare number = seconds, number + s = seconds, number + m = minutes
-$opencodeTimeout = 30 * 60; // default: 30 minutes in seconds
-if (isset($args['timeout'])) {
-    $raw = is_array($args['timeout']) ? $args['timeout'][0] : $args['timeout'];
-    if ($raw !== false && $raw !== '') {
-        $raw = trim($raw);
-        if (preg_match('/^(\d+)([smh])?$/i', $raw, $m)) {
-            $val = (int)$m[1];
-            $unit = strtolower($m[2] ?? '');
-            if ($unit === 'm') {
-                $opencodeTimeout = $val * 60;
-            } elseif ($unit === 'h') {
-                $opencodeTimeout = $val * 3600;
+$GLOBALS['verbose'] = 0;
+$GLOBALS['running'] = true;
+$GLOBALS['logFile'] = null;
+$GLOBALS['waitIfEmpty'] = false;
+$GLOBALS['reviewBots'] = false;
+$GLOBALS['showAgent'] = false;
+$GLOBALS['showAllIssues'] = false;
+$GLOBALS['onlyPrep'] = false;          // --only-prep: prep checkout, print opencode cmd, exit without running
+$GLOBALS['opencodeTimeout'] = 30 * 60; // default: 30 minutes in seconds
+$GLOBALS['activeChildPid'] = 0;        // pid (process-group leader) of in-flight opencode child
+$GLOBALS['signalCount'] = 0;           // SIGINT/SIGTERM presses so far
+$GLOBALS['interruptReadFd'] = null;    // socket pair used to wake stream_select() from the signal handler
+$GLOBALS['interruptWriteFd'] = null;
+
+if ($__directRun) {
+    // At file scope these are the same variables as the $GLOBALS defaults above
+    $verbose = $GLOBALS['verbose'];
+    $optind = 0;
+    // NOTE: no ':' after 'b'/'a' — they are flags, not options with values.
+    $args = getopt('vhwba', ['verbose', 'help', 'wait-if-empty', 'review-bots', 'show-agent', 'show-all-issues', 'only-prep', 'timeout:', 'log::'], $optind);
+    if (isset($args['h']) || isset($args['help'])) {
+        fwrite(STDOUT, "Usage: php scripts/github-code-review.php [-v|--verbose]... [-w|--wait-if-empty] [-b|--review-bots] [-a|--show-agent] [--show-all-issues] [--only-prep] [--timeout=30m] [--log=FILE]\n");
+        fwrite(STDOUT, "  -v, --verbose      Increase verbosity (can stack: -vv, -vvv, -vvvv)\n");
+        fwrite(STDOUT, "    -v   [INFO]     Essential progress (job start/complete/errors)\n");
+        fwrite(STDOUT, "    -vv  [DEBUG]    Detailed progress (checkpoints, function entry)\n");
+        fwrite(STDOUT, "    -vvv [TRACE]    Full trace (loop iterations, gh commands)\n");
+        fwrite(STDOUT, "    -vvvv [RAW]     Everything: raw gh output, API responses, live opencode stream (implies -a)\n");
+        fwrite(STDOUT, "  -w, --wait-if-empty  Wait for jobs when queue is empty (default: exit)\n");
+        fwrite(STDOUT, "  -b, --review-bots    Also review PRs from bots like dependabot (default: skip)\n");
+        fwrite(STDOUT, "  -a, --show-agent      Stream opencode output in real-time at any verbosity\n");
+        fwrite(STDOUT, "  --show-all-issues     Include issues without file/line in report (default: skip summary sections)\n");
+        fwrite(STDOUT, "  --only-prep           Dequeue ONE job, check out the base branch, apply the PR diff,\n");
+        fwrite(STDOUT, "                        print the opencode command to run by hand, then exit WITHOUT\n");
+        fwrite(STDOUT, "                        running opencode. The checkout is left in place for manual\n");
+        fwrite(STDOUT, "                        testing; a cleanup command is printed. (Implies -w.)\n");
+        fwrite(STDOUT, "  --timeout=N           Timeout for opencode analysis (default: 30m). Examples: 30, 30s, 30m\n");
+        fwrite(STDOUT, "  --log=FILE            Append all log output to FILE (in addition to stderr)\n");
+        fwrite(STDOUT, "  -h, --help        Show this help message\n");
+        fwrite(STDOUT, "\n  Press Ctrl-C once for graceful shutdown (stops opencode, finishes cleanup);\n");
+        fwrite(STDOUT, "  press Ctrl-C a second time to force-quit immediately.\n");
+        exit(0);
+    }
+    if (isset($args['v'])) {
+        $verbose = min(4, $verbose + count((array)$args['v']));
+    }
+    if (isset($args['verbose'])) {
+        $verbose = min(4, $verbose + count((array)$args['verbose']));
+    }
+    $waitIfEmpty = isset($args['w']) || isset($args['wait-if-empty']);
+    $reviewBots = isset($args['b']) || isset($args['review-bots']);
+    $showAgent = isset($args['a']) || isset($args['show-agent']);
+    $showAllIssues = isset($args['show-all-issues']);
+    $onlyPrep = isset($args['only-prep']);
+    if ($onlyPrep) {
+        // Prep mode reviews exactly one queued job; wait for one if the queue
+        // is momentarily empty rather than exiting immediately.
+        $waitIfEmpty = true;
+    }
+
+    // Parse timeout: bare number = seconds, number + s = seconds, number + m = minutes
+    if (isset($args['timeout'])) {
+        $raw = is_array($args['timeout']) ? $args['timeout'][0] : $args['timeout'];
+        if ($raw !== false && $raw !== '') {
+            $raw = trim($raw);
+            if (preg_match('/^(\d+)([smh])?$/i', $raw, $m)) {
+                $val = (int)$m[1];
+                $unit = strtolower($m[2] ?? '');
+                if ($unit === 'm') {
+                    $opencodeTimeout = $val * 60;
+                } elseif ($unit === 'h') {
+                    $opencodeTimeout = $val * 3600;
+                } else {
+                    $opencodeTimeout = $val; // bare number = seconds
+                }
             } else {
-                $opencodeTimeout = $val; // bare number = seconds
+                fwrite(STDERR, "github-code-review: invalid --timeout value '{$raw}', using default 30m\n");
             }
-        } else {
-            fwrite(STDERR, "github-code-review: invalid --timeout value '{$raw}', using default 30m\n");
         }
     }
-}
-if (isset($args['log'])) {
-    $logFile = $args['log'] !== false ? $args['log'] : 'github-code-review.log';
+    if (isset($args['log'])) {
+        $logFile = $args['log'] !== false ? $args['log'] : 'github-code-review.log';
+    }
 }
 
 /**
@@ -173,6 +214,9 @@ function verbose_markdown(string $label, string $markdown): void
  *   - step_start → display step-start: {id}
  *   - step_finish → display ✓ step {tokens.input+output}
  *   - stop      → display ■ analysis complete
+ *   - subagent  → display sub-agent activity emitted by the
+ *                 subagent-reporter.ts opencode plugin in --format json mode
+ *                 (event: tool|text|reasoning|finished; agent, n, ...)
  *
  * @param string $line Raw NDJSON line
  * @param int $verbose Current verbosity level
@@ -259,6 +303,31 @@ function parseOpencodeEventLine(string $line, int $verbose = 4): ?string
         case 'stop':
             return '■ analysis complete';
 
+        case 'subagent':
+            // Emitted by the subagent-reporter.ts plugin in --format json mode.
+            // These carry sub-agent progress that opencode itself does not put
+            // in its NDJSON stream; render them to mirror the plain-text output.
+            $agent = is_string($event['agent'] ?? null) && $event['agent'] !== '' ? $event['agent'] : 'Subagent';
+            $n = $event['n'] ?? 1;
+            $sub = $event['event'] ?? '';
+            $prefix = "{$agent} {$n}: ";
+            if ($sub === 'finished') {
+                return '**** [' . strtoupper($agent) . ' FINISHED] ****';
+            }
+            if ($sub === 'tool') {
+                $tool = is_string($event['tool'] ?? null) && $event['tool'] !== '' ? $event['tool'] : 'tool';
+                $detail = is_string($event['detail'] ?? null) ? trim($event['detail']) : '';
+                return $prefix . '-> ' . $tool . ($detail !== '' ? ' ' . $detail : '');
+            }
+            $text = is_string($event['text'] ?? null) ? trim($event['text']) : '';
+            if ($text === '') {
+                return null;
+            }
+            if (strlen($text) > 5000) {
+                $text = substr($text, 0, 5000) . '... [truncated]';
+            }
+            return $prefix . ($sub === 'reasoning' ? 'Thinking: ' : '') . $text;
+
         default:
             // For unknown types, show nothing (no spam)
             return null;
@@ -266,86 +335,274 @@ function parseOpencodeEventLine(string $line, int $verbose = 4): ?string
 }
 
 /**
- * Stream opencode output in real-time, parsing NDJSON lines and displaying them
+ * Format one raw output line for real-time display.
  *
- * @param resource $stdout Pipe from proc_open
- * @param resource $interruptFd Interrupt pipe read end — signal handler writes here to wake stream_select()
- * @param int $verbose Verbosity level
- * @param string|null $logFile Optional log file path
- * @return string Accumulated raw output
+ * With --format json, opencode emits NDJSON events — those are pretty-printed
+ * via parseOpencodeEventLine(). With --format default (used with the
+ * subagent-reporter plugin), lines are plain text — passed through verbatim.
+ *
+ * @param string $line Raw line (may include trailing newline)
+ * @param int $verbose Current verbosity level
+ * @return string|null Text to display (without trailing newline), or null to skip
  */
-function streamOpencodeOutput($stdout, $interruptFd, int $verbose, ?string $logFile = null, int $timeout = 0): string
+function formatStreamLine(string $line, int $verbose = 0): ?string
 {
-    $accumulated = '';
-    $renderer = null;
-    $startTime = microtime(true);
+    $trimmed = trim($line);
+    if ($trimmed !== '' && ($trimmed[0] === '{' || $trimmed[0] === '[')) {
+        $decoded = json_decode($trimmed, true);
+        if (is_array($decoded) && isset($decoded['type'])) {
+            // NDJSON event line (--format json): pretty-print or skip
+            return parseOpencodeEventLine($trimmed, $verbose);
+        }
+    }
+    // Plain text line (--format default): passthrough as-is, preserving blank
+    // lines so markdown spacing survives
+    return rtrim($line, "\r\n");
+}
 
-    if ($verbose >= 4) {
-        try {
-            $renderer = new \SugarCraft\Shine\Renderer();
-        } catch (\Throwable $e) {
-            $renderer = null;
+/**
+ * Create the global interrupt socket pair used to wake stream_select() from
+ * the signal handler. Safe to call multiple times.
+ */
+function createInterruptPipe(): void
+{
+    if (is_resource($GLOBALS['interruptReadFd'] ?? null)) {
+        return;
+    }
+    $pair = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+    if ($pair === false) {
+        verbose_log('createInterruptPipe: stream_socket_pair failed — Ctrl-C wakeups will rely on select timeouts', 1);
+        return;
+    }
+    stream_set_blocking($pair[0], false);
+    stream_set_blocking($pair[1], false);
+    $GLOBALS['interruptReadFd'] = $pair[0];
+    $GLOBALS['interruptWriteFd'] = $pair[1];
+}
+
+/**
+ * Drain any pending bytes from the interrupt pipe (stale signal wakeups).
+ */
+function drainInterruptPipe(): void
+{
+    $fd = $GLOBALS['interruptReadFd'] ?? null;
+    if (is_resource($fd)) {
+        while (true) {
+            $bytes = fread($fd, 64);
+            if ($bytes === '' || $bytes === false) {
+                break;
+            }
+        }
+    }
+}
+
+/**
+ * Send a signal to a child and its entire process group/tree.
+ *
+ * Children are launched via `setsid --wait`, which either execs the command
+ * directly (child pid == new group id) or forks first (the new group leader
+ * is a *child* of $pid). Handle both by collecting the process-group ids of
+ * $pid and each of its children, then signalling every group.
+ */
+function terminateChildGroup(int $pid, int $signal = SIGTERM): void
+{
+    if ($pid <= 0) {
+        return;
+    }
+
+    $pgids = [$pid => true];
+    $kids = trim((string)shell_exec('pgrep -P ' . $pid . ' 2>/dev/null'));
+    if ($kids !== '') {
+        foreach (preg_split('/\s+/', $kids) ?: [] as $kid) {
+            $kid = (int)$kid;
+            if ($kid > 0) {
+                $kpgid = (int)trim((string)shell_exec('ps -o pgid= -p ' . $kid . ' 2>/dev/null'));
+                $pgids[$kpgid > 0 ? $kpgid : $kid] = true;
+            }
         }
     }
 
-    $timeoutSecs = $timeout > 0 ? $timeout : 86400; // default 24h if no timeout
-    $deadline = $startTime + $timeoutSecs;
-
-    while (!feof($stdout)) {
-        global $running;
-        // Calculate remaining time for this select call
-        $remaining = max(1, (int)($deadline - microtime(true)));
-        $read = [$stdout, $interruptFd];
-        $write = null;
-        $except = null;
-        $changed = @stream_select($read, $write, $except, 1, 0); // 1 second timeout + microseconds
-
-        if ($changed === false) {
-            break; // error on stream
+    foreach (array_keys($pgids) as $pgid) {
+        if (function_exists('posix_kill')) {
+            @posix_kill(-$pgid, $signal); // whole process group
+            @posix_kill($pgid, $signal);  // and the pid directly, in case it changed group
+        } else {
+            exec('kill -' . $signal . ' -- -' . $pgid . ' ' . $pgid . ' 2>/dev/null');
         }
+    }
+}
 
-        if ($changed === 0) {
-            // Timeout on select - check if overall deadline exceeded
-            if (microtime(true) >= $deadline) {
-                verbose_log("streamOpencodeOutput: overall timeout reached ({$timeoutSecs}s), stopping", 1);
-                break;
-            }
-            continue; // No data ready yet, loop and try again
+/**
+ * Run a shell command via proc_open with real-time streaming, timeout
+ * enforcement, and reliable Ctrl-C termination.
+ *
+ * - stdout and stderr are both drained continuously (a full pipe buffer can
+ *   otherwise deadlock the child).
+ * - Each complete stdout line is displayed via formatStreamLine() when
+ *   $stream is true.
+ * - The child is launched through setsid so the whole process tree can be
+ *   killed as one process group; the pid is registered in
+ *   $GLOBALS['activeChildPid'] so the SIGINT handler can terminate it.
+ * - proc_close() is only called after the child is confirmed dead, so it can
+ *   never block a shutdown.
+ *
+ * @param string $cmd Shell command
+ * @param string|null $cwd Working directory for the child
+ * @param int $timeout Seconds before the child is killed (0 = 24h safety cap)
+ * @param bool $stream Display output lines on STDERR in real-time
+ * @return array{output: string, stderr: string, exitCode: int, timedOut: bool, interrupted: bool}
+ */
+function runStreamedCommand(string $cmd, ?string $cwd, int $timeout, bool $stream): array
+{
+    global $running, $verbose, $logFile;
+
+    $result = ['output' => '', 'stderr' => '', 'exitCode' => -1, 'timedOut' => false, 'interrupted' => false];
+
+    // setsid puts the child in its own session/process group so
+    // terminateChildGroup() can kill opencode and all of its subagents at
+    // once; --wait keeps the direct child alive until the command exits so
+    // proc_get_status() tracks it and the real exit code propagates
+    static $setsid = null;
+    if ($setsid === null) {
+        $setsid = trim((string)shell_exec('command -v setsid 2>/dev/null'));
+    }
+    $fullCmd = ($setsid !== '' ? $setsid . ' --wait ' : '') . $cmd;
+
+    $desc = [
+        0 => ['file', '/dev/null', 'r'], // no stdin — opencode must not wait for input
+        1 => ['pipe', 'w'],
+        2 => ['pipe', 'w'],
+    ];
+    $proc = proc_open($fullCmd, $desc, $pipes, $cwd);
+    if ($proc === false) {
+        verbose_log('runStreamedCommand: proc_open failed', 1);
+        return $result;
+    }
+
+    $status = proc_get_status($proc);
+    $pid = (int)$status['pid'];
+    $GLOBALS['activeChildPid'] = $pid;
+
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+
+    createInterruptPipe();
+    drainInterruptPipe();
+    $interruptFd = $GLOBALS['interruptReadFd'];
+
+    $timeoutSecs = $timeout > 0 ? $timeout : 86400; // safety cap when no timeout given
+    $deadline = microtime(true) + $timeoutSecs;
+    $stdoutBuf = '';
+
+    $displayLine = static function (string $rawLine) use ($stream, $verbose, $logFile): void {
+        if (!$stream) {
+            return;
         }
-
-        // Check if interrupt pipe fired (SIGINT/SIGTERM) — must be first
-        if (in_array($interruptFd, $read, true)) {
-            // Drain the interrupt byte(s)
-            do { $b = fgets($interruptFd); } while ($b !== false && !feof($interruptFd));
-            if (!$running) {
-                verbose_log("streamOpencodeOutput: shutdown requested, stopping", 2);
-                break;
-            }
+        $display = formatStreamLine($rawLine, $verbose);
+        if ($display === null) {
+            return;
         }
+        fwrite(STDERR, $display . "\n");
+        fflush(STDERR);
+        if ($logFile !== null && trim($display) !== '') {
+            $timestamp = date('Y-m-d H:i:s.') . sprintf('%06d', (microtime(true) - floor(microtime(true))) * 1000000);
+            file_put_contents($logFile, "[{$timestamp}] [AGENT] {$display}\n", FILE_APPEND);
+        }
+    };
 
-        $line = fgets($stdout);
-        if ($line === false) {
+    while (!feof($pipes[1]) || !feof($pipes[2])) {
+        if (!$running) {
+            $result['interrupted'] = true;
+            verbose_log('runStreamedCommand: shutdown requested, stopping child', 2);
+            break;
+        }
+        if (microtime(true) >= $deadline) {
+            $result['timedOut'] = true;
+            verbose_log("runStreamedCommand: timeout reached ({$timeoutSecs}s), terminating child", 1);
             break;
         }
 
-        $accumulated .= $line;
+        $read = [$pipes[1], $pipes[2]];
+        if (is_resource($interruptFd)) {
+            $read[] = $interruptFd;
+        }
+        $write = null;
+        $except = null;
+        $changed = @stream_select($read, $write, $except, 1, 0);
+        if ($changed === false) {
+            // Interrupted by a signal (EINTR) — loop re-checks $running/deadline
+            continue;
+        }
+        if ($changed === 0) {
+            continue;
+        }
 
-        // Parse and display the event in real-time
-        $display = parseOpencodeEventLine($line, $verbose);
-        if ($display !== null && $display !== '') {
-            // Output to stderr for real-time display
-            fwrite(STDERR, $display . "\n");
-            fflush(STDERR);
+        if (is_resource($interruptFd) && in_array($interruptFd, $read, true)) {
+            drainInterruptPipe();
+            continue; // loop top re-checks $running
+        }
 
-            // Also log to file if configured
-            if ($logFile !== null) {
-                $timestamp = date('Y-m-d H:i:s.') . sprintf('%06d', (microtime(true) - floor(microtime(true))) * 1000000);
-                file_put_contents($logFile, "[{$timestamp}] [AGENT] {$display}\n", FILE_APPEND);
+        if (in_array($pipes[1], $read, true)) {
+            $chunk = fread($pipes[1], 65536);
+            if (is_string($chunk) && $chunk !== '') {
+                $result['output'] .= $chunk;
+                $stdoutBuf .= $chunk;
+                while (($pos = strpos($stdoutBuf, "\n")) !== false) {
+                    $displayLine(substr($stdoutBuf, 0, $pos + 1));
+                    $stdoutBuf = substr($stdoutBuf, $pos + 1);
+                }
+            }
+        }
+        if (in_array($pipes[2], $read, true)) {
+            $chunk = fread($pipes[2], 65536);
+            if (is_string($chunk) && $chunk !== '') {
+                $result['stderr'] .= $chunk;
+                if ($stream) {
+                    fwrite(STDERR, $chunk);
+                    fflush(STDERR);
+                }
             }
         }
     }
 
-    return $accumulated;
+    // Flush any partial final line
+    if ($stdoutBuf !== '') {
+        $displayLine($stdoutBuf);
+    }
+
+    // Make sure the child (and its whole process group) is dead before
+    // proc_close() — otherwise proc_close blocks until opencode finishes,
+    // which is exactly the "Ctrl-C doesn't stop it" bug.
+    $status = proc_get_status($proc);
+    if ($status['running']) {
+        terminateChildGroup($pid, SIGTERM);
+        $waitUntil = microtime(true) + 5.0;
+        while ($status['running'] && microtime(true) < $waitUntil) {
+            usleep(100000);
+            $status = proc_get_status($proc);
+        }
+        if ($status['running']) {
+            verbose_log('runStreamedCommand: child ignored SIGTERM, sending SIGKILL', 1);
+            terminateChildGroup($pid, SIGKILL);
+            usleep(200000);
+            $status = proc_get_status($proc);
+        }
+    }
+
+    foreach ($pipes as $pipe) {
+        if (is_resource($pipe)) {
+            @fclose($pipe);
+        }
+    }
+
+    $closeCode = proc_close($proc);
+    // proc_get_status() reports the real exit code once the process has
+    // exited; proc_close() returns -1 in that case, so prefer the former.
+    $result['exitCode'] = $status['exitcode'] !== -1 ? $status['exitcode'] : $closeCode;
+
+    $GLOBALS['activeChildPid'] = 0;
+
+    return $result;
 }
 
 /**
@@ -546,55 +803,73 @@ function applyPRDiff(string $checkoutPath, ?string $diff): bool
 const GITHUB_TOKEN = 'GITHUB_TOKEN';
 const CHECKOUT_ROOT = 'CHECKOUT_ROOT';
 const OPENCODE_ANALYZE_CMD = 'OPENCODE_ANALYZE_CMD';
-const OPENCODE_IMPROVE_CMD = 'OPENCODE_IMPROVE_CMD';
 const MAX_RETRIES = 3;
-const WORKER_TIMEOUT = 180; // seconds to wait for analysis per job (bigger repos need more time)
 
 $githubToken = getenv(GITHUB_TOKEN) ?: '';
 $ghToken = getenv('GH_TOKEN') ?: '';
 $checkoutRoot = getenv(CHECKOUT_ROOT) ?: '/tmp/pr-checkouts';
 $opencodeAnalyzeCmd = getenv(OPENCODE_ANALYZE_CMD) ?: 'sh -c "cd {dir} && opencode run \"Analyze all PHP files in this directory tree. Find issues and return JSON array with fields: file, line, severity (error/warning/info), message for each issue\" --format json" 2>&1';
-$opencodeImproveCmd = getenv(OPENCODE_IMPROVE_CMD) ?: 'sh -c "cd {dir} && opencode run \"Fix the PHP issue at line {line} in {file}\" --format json" 2>&1';
 
-// Check if logged into gh
-$authStatus = (string)shell_exec('gh auth status 2>&1');
-if (strpos($authStatus, 'authenticated') === false && strpos($authStatus, 'Logged in') === false) {
-    error_log('github-code-review: Not logged into gh. Run "gh auth login" first.');
-    exit(1);
-}
+if ($__directRun) {
+    // Check if logged into gh
+    $authStatus = (string)shell_exec('gh auth status 2>&1');
+    if (strpos($authStatus, 'authenticated') === false && strpos($authStatus, 'Logged in') === false) {
+        error_log('github-code-review: Not logged into gh. Run "gh auth login" first.');
+        exit(1);
+    }
 
-// Pass tokens to child processes if set
-if ($githubToken !== '') {
-    putenv("GITHUB_TOKEN={$githubToken}");
-}
-if ($ghToken !== '') {
-    putenv("GH_TOKEN={$ghToken}");
+    // Pass tokens to child processes if set
+    if ($githubToken !== '') {
+        putenv("GITHUB_TOKEN={$githubToken}");
+    }
+    if ($ghToken !== '') {
+        putenv("GH_TOKEN={$ghToken}");
+    }
 }
 
 // === Signal Handling ===
-// Enable async signals so signals can fire during blocking exec() calls
-if (function_exists('pcntl_async_signals')) {
-    pcntl_async_signals(true);
+
+/**
+ * Install SIGINT/SIGTERM handlers.
+ *
+ * First Ctrl-C: graceful — stop the in-flight opencode child, let the worker
+ * finish cleanup, and exit. Second Ctrl-C: force quit immediately.
+ */
+function installSignalHandlers(): void
+{
+    if (!function_exists('pcntl_signal')) {
+        return;
+    }
+    // Enable async signals so handlers fire during blocking exec()/BRPOP calls
+    if (function_exists('pcntl_async_signals')) {
+        pcntl_async_signals(true);
+    }
+    createInterruptPipe();
+    $shutdownHandler = function (int $signo): void {
+        global $running;
+        $running = false;
+        $name = $signo === SIGTERM ? 'SIGTERM' : 'SIGINT';
+        $count = ++$GLOBALS['signalCount'];
+        if ($count === 1) {
+            fwrite(STDERR, "\ngithub-code-review: received {$name}, shutting down (press Ctrl-C again to force quit)...\n");
+            // Wake up any stream_select() immediately so loops notice $running
+            if (is_resource($GLOBALS['interruptWriteFd'] ?? null)) {
+                @fwrite($GLOBALS['interruptWriteFd'], 'i');
+            }
+            // Stop the in-flight opencode child (and its subagent process group)
+            terminateChildGroup((int)$GLOBALS['activeChildPid'], SIGTERM);
+        } else {
+            fwrite(STDERR, "github-code-review: force quit\n");
+            terminateChildGroup((int)$GLOBALS['activeChildPid'], SIGKILL);
+            exit(130);
+        }
+    };
+    pcntl_signal(SIGINT, $shutdownHandler);
+    pcntl_signal(SIGTERM, $shutdownHandler);
 }
 
-if (function_exists('pcntl_signal')) {
-    pcntl_signal(SIGINT, function () {
-        global $running;
-        $running = false;
-        verbose_log("received SIGINT, shutting down...", 1);
-        // Wake up stream_select() immediately so the loop exits
-        if (isset($GLOBALS['interruptWriteFd']) && is_resource($GLOBALS['interruptWriteFd'])) {
-            @fwrite($GLOBALS['interruptWriteFd'], "i");
-        }
-    });
-    pcntl_signal(SIGTERM, function () {
-        global $running;
-        $running = false;
-        verbose_log("received SIGTERM, shutting down...", 1);
-        if (isset($GLOBALS['interruptWriteFd']) && is_resource($GLOBALS['interruptWriteFd'])) {
-            @fwrite($GLOBALS['interruptWriteFd'], "t");
-        }
-    });
+if ($__directRun) {
+    installSignalHandlers();
 }
 
 /**
@@ -602,29 +877,27 @@ if (function_exists('pcntl_signal')) {
  */
 function main(): void
 {
-    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $opencodeImproveCmd, $verbose, $waitIfEmpty, $reviewBots, $running;
+    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $verbose, $waitIfEmpty, $reviewBots, $running, $onlyPrep;
 
     verbose_log("worker started (verbose level {$verbose})", 1);
     verbose_log('waitIfEmpty=' . ($waitIfEmpty ? 'true' : 'false') . ' - ' . ($waitIfEmpty ? 'will wait for jobs' : 'will exit when queue empty'), 1);
     verbose_log('reviewBots=' . ($reviewBots ? 'true' : 'false') . ' - ' . ($reviewBots ? 'will review bot PRs' : 'will skip bot PRs'), 1);
+    if ($onlyPrep) {
+        verbose_log('onlyPrep=true - will prep ONE job, print the opencode command, and exit without running it', 1);
+    }
 
     $iteration = 0;
     while (true) {
         $iteration++;
         verbose_log("main loop iteration #{$iteration} - fetching job", 3);
 
-        // When waitIfEmpty=false, use non-blocking dequeue (timeout=0)
-        // When waitIfEmpty=true, use blocking dequeue with WORKER_TIMEOUT
-        $timeout = $waitIfEmpty ? WORKER_TIMEOUT : 0;
+        // When waitIfEmpty=false, use non-blocking dequeue (timeout=0).
+        // When waitIfEmpty=true, block in short 5s slices so a Ctrl-C during
+        // an idle BRPOP is noticed within seconds, not minutes.
+        $timeout = $waitIfEmpty ? 5 : 0;
         $job = CodeReviewQueue::dequeue($timeout);
 
         if ($job === null) {
-            if (!$waitIfEmpty) {
-                verbose_log("queue empty, exiting", 1);
-                break;
-            }
-            verbose_log("queue empty, waiting for jobs...", 1);
-            usleep(500000); // sleep 0.5s
             if (function_exists('pcntl_signal_dispatch')) {
                 pcntl_signal_dispatch();
             }
@@ -632,6 +905,11 @@ function main(): void
                 verbose_log("shutdown requested, exiting", 1);
                 break;
             }
+            if (!$waitIfEmpty) {
+                verbose_log("queue empty, exiting", 1);
+                break;
+            }
+            verbose_log("queue empty, waiting for jobs...", 3);
             continue;
         }
 
@@ -661,10 +939,15 @@ function main(): void
             $result = processJob($job);
             if ($result === 'true') {
                 verbose_log("completed job {$jobId}", 1);
+            } elseif ($result === 'prep_only') {
+                // --only-prep: one job prepared and printed; stop here
+                break;
             } elseif (is_string($result) && str_starts_with($result, 'no_issues')) {
                 verbose_log("no issues found for {$repo}#{$prNumber}", 1);
             } elseif ($result === 'shutdown') {
-                verbose_log("job {$jobId} shutdown requested, exiting", 1);
+                // Job was interrupted mid-flight — put it back so it isn't lost
+                verbose_log("job {$jobId} interrupted by shutdown, requeueing and exiting", 1);
+                CodeReviewQueue::requeue($job);
                 break;
             } else {
                 verbose_log("job {$jobId} failed: {$result}", 1);
@@ -703,7 +986,7 @@ function main(): void
  */
 function processJob(array $job): string
 {
-    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $opencodeImproveCmd, $verbose, $reviewBots, $running, $showAgent, $showAllIssues, $opencodeTimeout;
+    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $verbose, $reviewBots, $running, $showAgent, $showAllIssues, $opencodeTimeout, $onlyPrep;
 
     // Check if shutdown was requested before starting work
     if (!$running) {
@@ -731,8 +1014,15 @@ function processJob(array $job): string
         return 'invalid job: missing required fields';
     }
 
-    // Step 1: Checkout the base branch (target branch - where PR is merging into)
-    $checkoutPath = "{$checkoutRoot}/{$repo}/{$prNumber}";
+    // Reject repo names that could traverse outside the checkout root
+    if (!preg_match('#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $repo) || strpos($repo, '..') !== false) {
+        return 'invalid job: bad repo name';
+    }
+
+    // Step 1: Checkout the base branch (target branch - where PR is merging into).
+    // The path is keyed by repo+branch (not PR number) so it matches the 24h
+    // Redis checkout cache, which stores one path per repo:branch.
+    $checkoutPath = buildCheckoutPath($checkoutRoot, $repo, $baseBranch);
     verbose_log("starting checkout: repo={$repo} base_branch={$baseBranch} path={$checkoutPath}", 2);
 
     $checkoutOk = checkoutBranch($repo, $baseBranch, $checkoutPath);
@@ -761,6 +1051,7 @@ function processJob(array $job): string
             return 'checkout failed: could not look up base branch';
         }
         verbose_log("retrying with actual base branch: {$actualBaseBranch}", 2);
+        $checkoutPath = buildCheckoutPath($checkoutRoot, $repo, $actualBaseBranch);
         $checkoutOk = checkoutBranch($repo, $actualBaseBranch, $checkoutPath);
         if ($checkoutOk === 'shutdown') {
             verbose_log("shutdown during fallback checkout, abandoning job", 2);
@@ -776,13 +1067,35 @@ function processJob(array $job): string
     verbose_log("checkout complete: base branch checked out", 2);
 
     try {
-        // Step 2: Get the PR diff and apply it (files become modified/uncommitted)
+        // Step 2: Reset the checkout to a pristine base state BEFORE applying
+        // the PR diff. (Resetting after the apply would silently wipe the PR
+        // changes and make every analysis review an unchanged tree.)
+        if (!resetCheckoutToCleanState($checkoutPath, $baseBranch)) {
+            return 'checkout reset failed';
+        }
+        initGitRepo($checkoutPath);
+
+        // Step 3: Get the PR diff, apply it, and commit it as a snapshot.
+        //
+        // After a successful apply the working tree holds the PR changes on top
+        // of the base commit. We record the base commit as the `_base` ref and
+        // commit the PR changes so that HEAD = base+PR with a clean tree. This
+        // gives the reviewer a real baseline ABOVE the PR: `git diff _base HEAD`
+        // shows the PR, and once opencode edits files in place, a plain
+        // `git diff` (working tree vs this snapshot) shows ONLY the agent's
+        // fixes — cleanly separated from the PR's own changes.
+        $snapshotCommitted = false;
         $diff = getPRDiff($repo, $prNumber);
         if ($diff !== null && $diff !== '') {
             verbose_log("applying PR diff for {$repo}#{$prNumber}", 2);
             $applyOk = applyPRDiff($checkoutPath, $diff);
             if ($applyOk) {
-                verbose_log("PR diff applied successfully - files now modified", 2);
+                if (commitPrSnapshot($checkoutPath, $prNumber)) {
+                    $snapshotCommitted = true;
+                    verbose_log("PR snapshot committed (HEAD=base+PR, _base=base)", 2);
+                } else {
+                    verbose_log("failed to commit PR snapshot - agent fixes cannot be captured", 1);
+                }
             } else {
                 verbose_log("failed to apply PR diff - analyzing base branch only", 2);
             }
@@ -790,15 +1103,13 @@ function processJob(array $job): string
             verbose_log("no diff retrieved - analyzing base branch only", 2);
         }
 
-        // Step 3: Initialize git repo and run opencode analysis on the modified working dir
-        // Reset checkout to clean state before analysis (important for cached checkouts)
-        if (!resetCheckoutToCleanState($checkoutPath, $baseBranch)) {
-            return 'checkout reset failed';
+        // --only-prep: checkout is ready with the PR diff applied. Print the
+        // opencode command to run by hand and stop here without running it.
+        if ($onlyPrep) {
+            return prepOnly($checkoutPath, $repo, $prNumber, (string)$jobId, $baseBranch);
         }
 
-        initGitRepo($checkoutPath);
-
-        verbose_log("starting opencode analysis for {$repo}#{$prNumber} in {$checkoutPath}" . ($opencodeTimeout > 0 ? " (timeout: " . ($opencodeTimeout >= 3600 ? round($opencodeTimeout/3600,1)."h" : round($opencodeTimeout/60,1)."m") . ")" : ""), 2);
+        verbose_log("starting opencode analysis for {$repo}#{$prNumber} in {$checkoutPath}" . ($opencodeTimeout > 0 ? " (timeout: " . ($opencodeTimeout >= 3600 ? round($opencodeTimeout/3600, 1)."h" : round($opencodeTimeout/60, 1)."m") . ")" : ""), 2);
         $analysisOutput = runOpencodeAnalysis($checkoutPath, $jobId, $opencodeAnalyzeCmd, $showAgent, $opencodeTimeout);
         verbose_log("analysis command completed", 3);
 
@@ -817,6 +1128,21 @@ function processJob(array $job): string
             return 'no_issues';
         }
 
+        // Capture the agent's in-place fixes: a `git diff` of the working tree
+        // against the committed PR snapshot is ONLY the agent's edits. When no
+        // snapshot was committed (PR diff failed to apply, or the commit
+        // failed), there is nothing to diff against, so every issue is posted
+        // flag-only.
+        $fixDiff = '';
+        $fixedFiles = [];
+        if ($snapshotCommitted) {
+            ['diff' => $fixDiff, 'files' => $fixedFiles] = captureAgentFixes($checkoutPath);
+            verbose_log('agent modified ' . count($fixedFiles) . ' file(s): ' . ($fixedFiles !== [] ? implode(', ', $fixedFiles) : '(none)'), 2);
+            if ($fixDiff !== '' && $verbose >= 4) {
+                verbose_raw('agent_fix_diff', $fixDiff);
+            }
+        }
+
         $issuesPosted = 0;
         $issuesFixed = 0;
 
@@ -827,26 +1153,88 @@ function processJob(array $job): string
             $message = $issue['message'] ?? $issue['description'] ?? 'Issue';
             verbose_log("processing issue #{$index}: file={$file} line={$line} message=" . substr($message, 0, 60), 3);
 
-            $issueResult = processIssue($issue, $checkoutPath, $githubToken, $repo, $prNumber, $sha, $opencodeImproveCmd);
+            $issueResult = processIssue($issue, $checkoutPath, $githubToken, $repo, $prNumber, $sha, $fixedFiles);
             if ($issueResult === true) {
                 $issuesFixed++;
-                verbose_log("posted fix for issue #{$index}", 3);
+                verbose_log("posted comment for issue #{$index}", 3);
             }
             $issuesPosted++;
         }
 
-        verbose_log("completed processing: {$issuesFixed}/{$issuesPosted} fixes posted for {$repo}#{$prNumber}", 2);
+        verbose_log("completed processing: {$issuesFixed}/{$issuesPosted} issue comment(s) posted for {$repo}#{$prNumber}", 2);
     } finally {
-        // Always clean up checkout
-        verbose_log("cleaning up checkout: {$checkoutPath}", 3);
-        exec("rm -rf " . escapeshellarg($checkoutPath));
+        if ($onlyPrep) {
+            // Leave the prepared checkout in place for manual testing (prepOnly
+            // printed a cleanup command). Drop the cache entry so a real worker
+            // re-clones a clean tree instead of reusing this hand-modified
+            // sandbox — both the fresh-clone and cache-hit paths self-heal, so
+            // this only affects which one runs, never correctness.
+            invalidateCachedCheckout($repo, $baseBranch);
+            verbose_log("--only-prep: leaving checkout in place at {$checkoutPath}", 1);
+        } elseif (getCachedCheckoutPath($repo, $baseBranch) === $checkoutPath) {
+            // Checkout is cached for 24h reuse — keep it. The next job resets
+            // it to a clean state before use, and analysis leftovers are wiped
+            // by resetCheckoutToCleanState() at that point.
+            verbose_log("keeping cached checkout for reuse: {$checkoutPath}", 3);
+        } else {
+            verbose_log("cleaning up checkout: {$checkoutPath}", 3);
+            cleanupCheckout($checkoutPath);
+        }
     }
 
     return 'true';
 }
 
 /**
- * Process a single issue: generate fix and post PR comment
+ * --only-prep handler. The checkout at $checkoutPath already has the base
+ * branch checked out and the PR diff applied; write the opencode prompt file
+ * and print the exact command to run by hand plus a cleanup command, then
+ * return 'prep_only' so main() stops after this one job.
+ */
+function prepOnly(string $checkoutPath, string $repo, int $prNumber, string $jobId, string $baseBranch): string
+{
+    ['cmd' => $opencodeCmd, 'promptFile' => $promptFile] = prepareOpencodeCommand($jobId);
+    // The PR is committed as a snapshot on top of _base, so the PR's changed
+    // files are the `_base HEAD` range (a plain `git diff` would be empty).
+    $changed = trim((string)shell_exec('cd ' . escapeshellarg($checkoutPath) . ' && git diff --name-only _base HEAD 2>/dev/null'));
+
+    fwrite(STDOUT, buildPrepInstructions($checkoutPath, $repo, $prNumber, $baseBranch, $promptFile, $opencodeCmd, $changed));
+
+    verbose_log("--only-prep: prepared {$repo}#{$prNumber} at {$checkoutPath}, exiting without running opencode", 1);
+    return 'prep_only';
+}
+
+/**
+ * Build the human-facing --only-prep instructions block (pure; no I/O).
+ *
+ * @param string $changed Newline-separated changed file list from `git diff --name-only`
+ */
+function buildPrepInstructions(string $checkoutPath, string $repo, int $prNumber, string $baseBranch, string $promptFile, string $opencodeCmd, string $changed): string
+{
+    $rule = str_repeat('=', 72);
+    $out  = "\n{$rule}\n";
+    $out .= " --only-prep: checkout is ready — opencode was NOT run\n";
+    $out .= "{$rule}\n";
+    $out .= " Repo / PR : {$repo}#{$prNumber}\n";
+    $out .= " Base ref  : {$baseBranch}\n";
+    $out .= " Checkout  : {$checkoutPath}\n";
+    $out .= " Prompt    : {$promptFile}\n";
+    $out .= " Changed   : " . ($changed !== '' ? str_replace("\n", ', ', $changed) : '(none — the PR diff may have failed to apply)') . "\n";
+    $out .= "\n Run the review yourself (opencode uses the current dir as its cwd):\n\n";
+    $out .= "   cd " . escapeshellarg($checkoutPath) . " \\\n";
+    $out .= "     && {$opencodeCmd}\n";
+    $out .= "\n Clean up when finished:\n\n";
+    $out .= "   rm -rf " . escapeshellarg($checkoutPath) . " " . escapeshellarg($promptFile) . "\n";
+    $out .= "{$rule}\n\n";
+    return $out;
+}
+
+/**
+ * Process a single issue: post a PR comment, including the agent's in-place fix
+ * diff when one was captured for the issue's file.
+ *
+ * The proposed fix comes from the git working tree (opencode edited files in
+ * place during the single review run), NOT from a second opencode pass.
  *
  * @param array $issue Issue from opencode analysis
  * @param string $checkoutPath Local checkout path
@@ -854,85 +1242,46 @@ function processJob(array $job): string
  * @param string $repo Repo name
  * @param int $prNumber PR number
  * @param string $sha Commit SHA
- * @param string $improveCmd OpenCode improve command template
- * @return bool True if fix was posted, false otherwise
+ * @param string[] $fixedFiles Files the agent edited (from `git diff --name-only`)
+ * @return bool True if the comment was posted, false otherwise
  */
-function processIssue(array $issue, string $checkoutPath, string $token, string $repo, int $prNumber, string $sha, string $improveCmd): bool
+function processIssue(array $issue, string $checkoutPath, string $token, string $repo, int $prNumber, string $sha, array $fixedFiles): bool
 {
     $file = $issue['file'] ?? $issue['path'] ?? '';
     $line = (int)($issue['line'] ?? $issue['line_number'] ?? 0);
-    $message = $issue['message'] ?? $issue['description'] ?? 'Issue found';
-    $severity = $issue['severity'] ?? $issue['level'] ?? 'warning';
-    $rule = $issue['rule'] ?? $issue['id'] ?? '';
 
     if ($file === '') {
         verbose_log("skipping issue: no file specified", 2);
         return false;
     }
 
-    // Save original file content for diff
-    $originalFilePath = $checkoutPath . '/' . $file;
-    if (!file_exists($originalFilePath)) {
-        verbose_log("file {$file} does not exist in checkout, skipping", 2);
-        return false;
-    }
-    $originalContent = file_get_contents($originalFilePath);
-    if ($originalContent === false) {
-        verbose_log("file {$file} could not be read, skipping", 2);
-        return false;
-    }
-
-    verbose_log("running opencode improve for {$file}:{$line}", 2);
-    // Run opencode improve to generate a fix
-    $improveOutput = runOpencodeImprove($checkoutPath, $file, $line, $improveCmd);
-    $fixResult = parseImproveOutput($improveOutput, $file, $originalContent);
-
-    if (!$fixResult['success']) {
-        // No fix available or failed to generate
-        // Post issue without fix
-        verbose_log("no fix generated for {$file}:{$line}, posting issue without fix", 2);
-        $commentBody = buildIssueComment($issue, null, $repo, $prNumber, false);
-        $postResult = postPrComment($token, $repo, $prNumber, $commentBody);
-        if ($postResult === 'true') {
-            verbose_log("posted issue comment for {$file}:{$line}", 2);
-        } else {
-            verbose_log("failed to post issue comment: {$postResult}", 1);
+    // A proposed fix is available only when the agent edited this issue's file.
+    $diff = null;
+    $hasFix = in_array($file, $fixedFiles, true);
+    if ($hasFix) {
+        $diff = getAgentFileDiff($checkoutPath, $file);
+        if (trim($diff) === '') {
+            // Named in the diff but no actual hunks — treat as flag-only.
+            $hasFix = false;
+            $diff = null;
         }
-        return $postResult === 'true';
     }
 
-    verbose_log("fix generated for {$file}:{$line}, applying and posting diff", 2);
+    $commentBody = buildIssueComment($issue, $diff, $repo, $prNumber, $hasFix);
 
-    // Apply the fix to the file
-    $fixedContent = $fixResult['content'];
-    if ($fixedContent === null) {
-        verbose_log("fix content is null, skipping", 2);
-        return false;
+    if ($hasFix) {
+        verbose_log("posting review comment with agent fix for {$file}:{$line}", 2);
+        // Post as a review comment (with line reference if possible)
+        $postResult = postPrReviewComment($token, $repo, $prNumber, $commentBody, $sha, $file, $line);
+    } else {
+        verbose_log("no agent fix for {$file}:{$line}, posting flag-only comment", 2);
+        $postResult = postPrComment($token, $repo, $prNumber, $commentBody);
     }
-    if (file_put_contents($originalFilePath, $fixedContent) === false) {
-        verbose_log("failed to write fixed content to {$file}, skipping", 1);
-        return false;
-    }
-
-    // Get the git diff for this specific file
-    $diff = getFileDiff($checkoutPath, $file, $originalContent, $fixedContent);
-
-    // Restore original (we don't actually commit, just use the diff for the comment)
-    if (file_put_contents($originalFilePath, $originalContent) === false) {
-        verbose_log("failed to restore original content in {$file}", 1);
-    }
-
-    // Build the comment with the diff
-    $commentBody = buildIssueComment($issue, $diff, $repo, $prNumber, true);
-
-    verbose_log("posting diff comment for {$file}:{$line}", 2);
-    // Post as a review comment (with line reference if possible)
-    $postResult = postPrReviewComment($token, $repo, $prNumber, $commentBody, $sha, $file, $line);
 
     if ($postResult === 'true') {
-        verbose_log("posted diff comment for {$file}:{$line}", 2);
+        verbose_log("posted comment for {$file}:{$line}", 2);
     } else {
-        verbose_log("failed to post diff comment: {$postResult}", 1);
+        verbose_log("failed to post comment: {$postResult}", 1);
     }
 
     return $postResult === 'true';
@@ -991,223 +1340,132 @@ function buildIssueComment(array $issue, ?string $diff, string $repo, int $prNum
 }
 
 /**
- * Run opencode improve on a directory to generate fixes
+ * Commit the applied PR diff as a snapshot on top of the base commit.
  *
- * @param string $dir Checkout directory
- * @param string $file Specific file to fix
- * @param int $line Line number of the issue
- * @param string $cmd Command template
- * @return string Raw output from opencode
+ * Before this runs, HEAD is at the base commit and the working tree holds the
+ * PR changes (uncommitted). We force the `_base` ref at the current base commit,
+ * stage everything, and commit with a fixed bot identity. Afterwards HEAD =
+ * base+PR with a clean tree and `_base` points at the base commit, so
+ * `git diff _base HEAD` is exactly the PR and a later `git diff` is exactly the
+ * agent's in-place fixes.
+ *
+ * @return bool True on success, false if the snapshot could not be committed
  */
-function runOpencodeImprove(string $dir, string $file, int $line, string $cmd): string
+function commitPrSnapshot(string $checkoutPath, int $prNumber): bool
 {
-    // Replace placeholders
-    $cmd = str_replace('{dir}', escapeshellarg($dir), $cmd);
-    $cmd = str_replace('{file}', escapeshellarg($file), $cmd);
-    $cmd = str_replace('{line}', (string)$line, $cmd);
-
+    $cmd = sprintf(
+        'cd %s && git branch -f _base 2>&1 && git add -A 2>&1 && '
+            . 'git -c user.email=%s -c user.name=%s commit -q -m %s 2>&1',
+        escapeshellarg($checkoutPath),
+        escapeshellarg('code-review-bot@webhooks.interserver.net'),
+        escapeshellarg('Code Review Bot'),
+        escapeshellarg("PR #{$prNumber} snapshot")
+    );
     $output = [];
     $ret = 0;
     exec($cmd, $output, $ret);
-
-    return implode("\n", $output);
+    if ($ret !== 0) {
+        verbose_log('commitPrSnapshot: failed: ' . substr(implode("\n", $output), 0, 200), 1);
+        return false;
+    }
+    verbose_log("commitPrSnapshot: committed PR #{$prNumber} snapshot in {$checkoutPath}", 3);
+    return true;
 }
 
 /**
- * Run a command with a timeout using proc_open and stream_select
+ * Capture the agent's in-place fixes: the git diff of the working tree against
+ * the committed PR snapshot (HEAD), plus the list of files it touched.
  *
- * @param string $cmd Command to run
- * @param int $timeoutSecs Timeout in seconds
- * @return array{output: string, exitCode: int, timedOut: bool}
+ * @return array{diff: string, files: string[]}
  */
-function runCommandWithTimeout(string $cmd, int $timeoutSecs = 30): array
+function captureAgentFixes(string $checkoutPath): array
 {
-    $desc = [
-        0 => ['pipe', 'r'],  // stdin
-        1 => ['pipe', 'w'],  // stdout
-        2 => ['pipe', 'w'],  // stderr
+    $diff = (string)shell_exec('cd ' . escapeshellarg($checkoutPath) . ' && git diff 2>/dev/null');
+    $namesRaw = trim((string)shell_exec('cd ' . escapeshellarg($checkoutPath) . ' && git diff --name-only 2>/dev/null'));
+    $files = $namesRaw === '' ? [] : (preg_split('/\r?\n/', $namesRaw) ?: []);
+    return ['diff' => $diff, 'files' => $files];
+}
+
+/**
+ * Return the git diff for a single file (working tree vs the committed PR
+ * snapshot) — i.e. just the agent's fix for that file.
+ */
+function getAgentFileDiff(string $checkoutPath, string $file): string
+{
+    return (string)shell_exec(
+        'cd ' . escapeshellarg($checkoutPath) . ' && git diff -- ' . escapeshellarg($file) . ' 2>/dev/null'
+    );
+}
+
+/**
+ * Strip ANSI escape sequences (colors, cursor movement, OSC titles) from text.
+ * opencode --format default may emit these; they break JSON/markdown parsing.
+ */
+function stripAnsi(string $text): string
+{
+    $text = (string)preg_replace('/\x1B\[[0-9;?]*[ -\/]*[@-~]/', '', $text); // CSI sequences
+    $text = (string)preg_replace('/\x1B\][^\x07\x1B]*(?:\x07|\x1B\\\\)?/', '', $text); // OSC sequences
+    return $text;
+}
+
+/**
+ * Detect the failure mode where the model (e.g. MiniMax-M2 served via SGLang)
+ * emits its tool-call markup as plain TEXT instead of a parsed tool call, then
+ * ends the turn — leaving the review truncated mid-thought. Examples seen:
+ *   <invoke name="bash">...</invoke></minimax:tool_call>
+ *   <|tool_calls_begin|> ... <tool_call> ...
+ *
+ * Only the tail is inspected, so a report that merely *quotes* such markup
+ * earlier in its body doesn't trigger a false positive — the leak-then-exit
+ * pattern always leaves the markup at the very end of the output.
+ */
+function looksLikeLeakedToolCall(string $output): bool
+{
+    if ($output === '') {
+        return false;
+    }
+    $tail = substr(stripAnsi($output), -1500);
+    $markers = [
+        'minimax:tool_call',    // <minimax:tool_call> / </minimax:tool_call>
+        '<invoke name=',        // Anthropic-style function block leaked as text
+        '<parameter name=',
+        '<tool_call>',
+        '</tool_call>',
+        '<|tool_calls_begin|>',
+        '<|tool_call_begin|>',
+        '<|tool_outputs_begin|>',
+        '<function_call',
+        '<function=',
     ];
-
-    $proc = proc_open($cmd, $desc, $pipes);
-
-    if ($proc === false) {
-        return ['output' => '', 'exitCode' => -1, 'timedOut' => true];
-    }
-
-    // Set stdout and stderr to non-blocking
-    stream_set_blocking($pipes[1], false);
-    stream_set_blocking($pipes[2], false);
-
-    $output = [];
-    $startTime = time();
-    $timedOut = false;
-
-    while (true) {
-        $read = [$pipes[1], $pipes[2]];
-        $write = null;
-        $except = null;
-        $secsRemaining = max(1, $timeoutSecs - (time() - $startTime));
-
-        $ready = @stream_select($read, $write, $except, 1, 0);
-
-        if ($ready === false) {
-            break;
-        }
-
-        foreach ($read as $pipe) {
-            $line = fgets($pipe);
-            if ($line !== false) {
-                $output[] = $line;
-            }
-        }
-
-        // Check if process has finished
-        $status = proc_get_status($proc);
-        if (!$status['running']) {
-            break;
-        }
-
-        // Check for timeout
-        if ((time() - $startTime) >= $timeoutSecs) {
-            $timedOut = true;
-            proc_terminate($proc, SIGKILL);
-            break;
+    foreach ($markers as $m) {
+        if (stripos($tail, $m) !== false) {
+            return true;
         }
     }
+    return false;
+}
 
-    // Read any remaining output
-    while (!feof($pipes[1])) {
-        $line = fgets($pipes[1]);
-        if ($line !== false) {
-            $output[] = $line;
-        }
-    }
-    while (!feof($pipes[2])) {
-        $line = fgets($pipes[2]);
-        if ($line !== false) {
-            $output[] = $line;
-        }
-    }
-
-    foreach ($pipes as $pipe) {
-        fclose($pipe);
-    }
-
-    $exitCode = proc_close($proc);
-
-    return [
-        'output' => implode('', $output),
-        'exitCode' => $exitCode,
-        'timedOut' => $timedOut,
+/**
+ * Remove leaked tool-call markup the model sometimes emits as plain text, so a
+ * partial report we choose to keep (after retries are exhausted) doesn't carry
+ * stray XML into the parsed output. Only well-formed paired blocks are removed;
+ * an unterminated trailing tag is left as-is (harmless to the markdown parser).
+ */
+function stripLeakedToolCalls(string $text): string
+{
+    $patterns = [
+        '#<minimax:tool_call>.*?</minimax:tool_call>#is',
+        '#</?minimax:tool_call>#i',
+        '#<invoke\b[^>]*>.*?</invoke>#is',
+        '#</?antml:invoke\b[^>]*>#i',
+        '#<parameter\b[^>]*>.*?</parameter>#is',
+        '#</?tool_call>#i',
+        '#<\|tool_(calls?|outputs?)_(begin|end)\|>#i',
+        '#</?function_call\b[^>]*>#i',
     ];
+    return (string)preg_replace($patterns, '', $text);
 }
 
-/**
- * Parse opencode improve output to extract fixed content
- *
- * Opencode outputs NDJSON format - each line is a separate JSON object.
- * Fixed content may be in JSON code blocks within text events.
- *
- * @param string $rawOutput Raw NDJSON output from opencode
- * @param string $file File path
- * @param string $originalContent Original file content
- * @return array{success: bool, content: string|null}
- */
-function parseImproveOutput(string $rawOutput, string $file, string $originalContent): array
-{
-    if ($rawOutput === '') {
-        return ['success' => false, 'content' => null];
-    }
-
-    $data = json_decode($rawOutput, true);
-    if (is_array($data)) {
-        $result = extractFixedContent($data, $file);
-        if ($result !== null) {
-            return ['success' => true, 'content' => $result];
-        }
-    }
-
-    $fullText = '';
-    $lines = explode("\n", $rawOutput);
-    foreach ($lines as $line) {
-        $line = trim($line);
-        if ($line === '') {
-            continue;
-        }
-
-        $event = json_decode($line, true);
-        if (!is_array($event)) {
-            continue;
-        }
-
-        if (($event['type'] ?? '') === 'text') {
-            $part = $event['part'] ?? [];
-            $text = is_array($part) ? ($part['text'] ?? '') : '';
-            $fullText .= $text . "\n";
-
-            if (preg_match('/```(?:json|php)?\s*(\{[\s\S]*?\})\s*```/', $text, $matches)) {
-                $json = json_decode($matches[1], true);
-                if (is_array($json)) {
-                    $result = extractFixedContent($json, $file);
-                    if ($result !== null) {
-                        return ['success' => true, 'content' => $result];
-                    }
-                }
-            }
-
-            if (preg_match('/```(?:php)?\s*(<\?php[\s\S]*?)\s*```/', $text, $matches)) {
-                return ['success' => true, 'content' => $matches[1]];
-            }
-        }
-    }
-
-    if ($fullText !== '') {
-        if (preg_match('/```php\s*(<\?php[\s\S]+?)\s*```/i', $fullText, $matches)) {
-            return ['success' => true, 'content' => $matches[1]];
-        }
-        if (preg_match('/```\s*(<\?php[\s\S]+?)\s*```/i', $fullText, $matches)) {
-            return ['success' => true, 'content' => $matches[1]];
-        }
-    }
-
-    return ['success' => false, 'content' => null];
-}
-
-/**
- * Extract fixed content from parsed JSON structure
- */
-function extractFixedContent(array $data, string $file): ?string
-{
-    if (isset($data['files'][$file]['content'])) {
-        return $data['files'][$file]['content'];
-    }
-
-    if (isset($data[$file]) && is_string($data[$file])) {
-        return $data[$file];
-    }
-
-    if (isset($data['content']) && is_string($data['content'])) {
-        return $data['content'];
-    }
-
-    if (isset($data['fixes']) && is_array($data['fixes'])) {
-        foreach ($data['fixes'] as $fix) {
-            if (($fix['file'] ?? '') === $file && isset($fix['content'])) {
-                return $fix['content'];
-            }
-        }
-    }
-
-    if (isset($data['improved'][$file])) {
-        return $data['improved'][$file];
-    }
-
-    if (isset($data['diff']) && is_string($data['diff'])) {
-        return $data['diff'];
-    }
-
-    return null;
-}
 /**
  * Redis-backed checkout cache: reuse repo checkouts for up to 24 hours.
  *
@@ -1237,6 +1495,21 @@ function getCheckoutRedis(): ?\Predis\Client
         $checkoutRedis = null;
         return null;
     }
+}
+
+/**
+ * Build the working-copy path for a repo+branch checkout.
+ *
+ * Keyed by branch (not PR number) so it lines up with the Redis checkout
+ * cache. Branch names are sanitized since they may contain slashes etc.
+ */
+function buildCheckoutPath(string $checkoutRoot, string $repo, string $branch): string
+{
+    $safeBranch = preg_replace('/[^A-Za-z0-9._-]/', '_', $branch);
+    if ($safeBranch === null || $safeBranch === '') {
+        $safeBranch = 'branch';
+    }
+    return "{$checkoutRoot}/{$repo}/base-{$safeBranch}";
 }
 
 /**
@@ -1295,18 +1568,33 @@ function invalidateCachedCheckout(string $repo, string $branch): void
 }
 
 /**
- * Reset a cached checkout to clean state: hard-reset working tree and
- * ensure correct branch is checked out. This is called before each PR
- * analysis to ensure a pristine base.
+ * Reset a checkout to a pristine base state before the next job reuses it.
+ *
+ * A previous (possibly cached) job may have left THREE kinds of drift behind:
+ * an in-place-edited working tree, a committed PR-snapshot commit, and a scratch
+ * `_base` ref. This wipes all of them so the tree is pristine at the BASE commit
+ * again:
+ *
+ *   1. git checkout -f <base>  — discard tracked-file edits, land on the base
+ *   2. git reset --hard <base> — drop any snapshot commit / staged state
+ *   3. git clean -fd           — remove untracked files the agent created
+ *   4. git branch -D _base      — delete the stale scratch ref
+ *
+ * The reset target is the base BRANCH, not the leftover `_base` ref:
+ * checkoutBranch() has already re-pointed the base branch at the freshly fetched
+ * remote tip (fresh clone or 24h-cache sync) and left no snapshot commit on the
+ * tip, so the base branch is the authoritative pristine base here. A leftover
+ * `_base` from a prior job points at that job's (possibly older) base commit, so
+ * resetting to it could drag the tree backward — the very drift this guards
+ * against. We therefore reset to the base branch and delete `_base` outright;
+ * commitPrSnapshot() recreates a fresh `_base` for each job.
  */
 function resetCheckoutToCleanState(string $checkoutPath, string $baseBranch): bool
 {
-    // Reset working tree, staging area, and untracked files so the next
-    // applyPRDiff starts from a completely clean state regardless of whether
-    // the previous run left staged, modified, or new files.
     $cmd = sprintf(
-        'cd %s && git checkout -f %s 2>&1 && git reset HEAD 2>&1 && git clean -fd 2>&1',
+        'cd %s && git checkout -f %s 2>&1 && git reset --hard %s 2>&1 && git clean -fd 2>&1',
         escapeshellarg($checkoutPath),
+        escapeshellarg($baseBranch),
         escapeshellarg($baseBranch)
     );
     $output = [];
@@ -1316,6 +1604,11 @@ function resetCheckoutToCleanState(string $checkoutPath, string $baseBranch): bo
         verbose_log("resetCheckoutToCleanState: failed for {$checkoutPath}: " . substr(implode("\n", $output), 0, 200), 1);
         return false;
     }
+
+    // Drop the scratch _base ref so a leftover ref can never point a future
+    // cached job at a stale commit. commitPrSnapshot() recreates it per job.
+    exec('cd ' . escapeshellarg($checkoutPath) . ' && git branch -D _base 2>/dev/null');
+
     verbose_log("resetCheckoutToCleanState: {$checkoutPath} reset to clean {$baseBranch}", 3);
     return true;
 }
@@ -1325,9 +1618,11 @@ function resetCheckoutToCleanState(string $checkoutPath, string $baseBranch): bo
  */
 function initGitRepo(string $checkoutPath): void
 {
-    // Set git identity (needed for diff)
+    // Set a git identity as a fallback for any local git operation. The PR
+    // snapshot is committed separately by commitPrSnapshot() with an explicit
+    // `-c user.email/-c user.name`, so this is belt-and-suspenders.
     $cmd = sprintf(
-        'cd %s && git config user.email %s && git config user.name %s && git add -A 2>/dev/null',
+        'cd %s && git config user.email %s && git config user.name %s',
         escapeshellarg($checkoutPath),
         escapeshellarg('code-review-bot@webhooks.interserver.net'),
         escapeshellarg('Code Review Bot')
@@ -1352,67 +1647,6 @@ function cleanupCheckout(string $path): void
         if ($ret !== 0) {
             verbose_log("cleanupCheckout: failed to remove {$path}", 1);
         }
-    }
-}
-
-/**
- * Get git diff for a specific file
- *
- * @param string $checkoutPath Checkout directory
- * @param string $file File path relative to checkout
- * @param string $originalContent Original content
- * @param string $fixedContent Fixed content
- * @return string Unified diff
- */
-function getFileDiff(string $checkoutPath, string $file, string $originalContent, string $fixedContent): string
-{
-    // Create a simple unified diff
-    $originalLines = explode("\n", $originalContent);
-    $fixedLines = explode("\n", $fixedContent);
-
-    $diff = "--- a/{$file}\n";
-    $diff .= "+++ b/{$file}\n";
-
-    // Use diff command for proper unified diff
-    $originalTmp = tempnam(sys_get_temp_dir(), 'orig_');
-    $fixedTmp = tempnam(sys_get_temp_dir(), 'fixed_');
-
-    // Ensure temp files are always cleaned up
-    $cleanup = function () use ($originalTmp, $fixedTmp): void {
-        if ($originalTmp !== false && file_exists($originalTmp)) {
-            unlink($originalTmp);
-        }
-        if ($fixedTmp !== false && file_exists($fixedTmp)) {
-            unlink($fixedTmp);
-        }
-    };
-
-    try {
-        file_put_contents($originalTmp, $originalContent);
-        file_put_contents($fixedTmp, $fixedContent);
-
-        $diffCmd = sprintf(
-            'diff -u %s %s 2>/dev/null | tail -n +4',
-            escapeshellarg($originalTmp),
-            escapeshellarg($fixedTmp)
-        );
-
-        $diffOutput = [];
-        $ret = 0;
-        exec($diffCmd, $diffOutput, $ret);
-
-        if (!empty($diffOutput)) {
-            // Remove the --- and +++ lines from diff output and use our own
-            $diffLines = array_slice($diffOutput, 2); // Skip --- and +++ lines
-            $diff .= implode("\n", $diffLines);
-        } else {
-            // Files are identical or diff failed
-            return '';
-        }
-
-        return $diff;
-    } finally {
-        $cleanup();
     }
 }
 
@@ -1444,8 +1678,10 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
         // Cache hit: the path already has the correct branch checked out.
         // Sync with remote to pick up new commits, then use it.
         verbose_log("checkoutBranch: cache hit for {$repo}:{$branch} at {$cachedPath} - syncing with remote", 2);
+        // Hard-reset to the freshly fetched remote tip — a plain checkout would
+        // leave a stale local branch pointing at the old commit
         $syncCmd = sprintf(
-            'cd %s && git fetch origin %s 2>&1 && git checkout %s 2>&1',
+            'cd %s && git fetch origin %s 2>&1 && git checkout -f %s 2>&1 && git reset --hard FETCH_HEAD 2>&1',
             escapeshellarg($cachedPath),
             escapeshellarg($branch),
             escapeshellarg($branch)
@@ -1573,163 +1809,146 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
 }
 
 /**
- * Run opencode analysis on a repository with modified (uncommitted) files
+ * Run opencode to review AND fix the PR changes in place.
  *
- * The repository should already have the PR diff applied (files modified/uncommitted).
- * Opencode will analyze the working directory and see changes via git diff.
+ * The repository already has the PR committed as a snapshot (HEAD = base+PR,
+ * `_base` = base commit). The review prompt tells opencode to diff `_base HEAD`
+ * to see the PR and to edit files in place to fix issues; those edits stay
+ * uncommitted in the working tree and are captured afterwards via `git diff`.
  *
- * @param string $dir Path to the git repository with PR changes applied
+ * @param string $dir Path to the git repository with the PR snapshot committed
  * @param string $jobId Unique job ID for temp file naming
  * @param string $cmdTemplate Unused, kept for signature compatibility
  * @return string Raw opencode output
  */
+/**
+ * Load the code-review prompt (from scripts/prompts/review.txt, with an inline
+ * fallback). Cached after first read.
+ */
+function getReviewPrompt(): string
+{
+    static $reviewPrompt = null;
+    if ($reviewPrompt !== null) {
+        return $reviewPrompt;
+    }
+    $fallback = 'Analyze the uncommitted changes in this git repository. Run "git diff" to see what changed. For each issue found return JSON: {"file":"path","line":N,"severity":"error|warning|info","message":"description"}. Return empty array if no issues.';
+    $file = __DIR__ . '/prompts/review.txt';
+    if (file_exists($file)) {
+        $loaded = file_get_contents($file);
+        if ($loaded === false) {
+            $reviewPrompt = $fallback;
+            verbose_log("review prompt file read failed, using inline fallback", 2);
+        } else {
+            $reviewPrompt = $loaded;
+            verbose_log("loaded review prompt from {$file} (" . strlen($loaded) . " bytes)", 3);
+        }
+    } else {
+        $reviewPrompt = $fallback;
+        verbose_log("review prompt file not found, using inline fallback", 2);
+    }
+    return $reviewPrompt;
+}
+
+/**
+ * Write the review prompt to a temp file and return the exact opencode command
+ * the worker runs plus that file's path. Shared by the live analysis path and
+ * --only-prep so the printed command is byte-for-byte what would run.
+ *
+ * The prompt is passed via `$(cat FILE)` to avoid shell-quoting issues with
+ * special characters (parentheses, quotes, $, `, etc.) in the prompt text.
+ * --format json makes opencode emit one NDJSON event per line, which the
+ * parsers/streamer handle natively; the ~/.config/opencode/plugins/
+ * subagent-reporter.ts plugin detects this flag and emits its own
+ * {"type":"subagent",...} NDJSON events so sub-agent progress interleaves
+ * cleanly instead of corrupting the stream.
+ *
+ * @return array{cmd: string, promptFile: string}
+ */
+function prepareOpencodeCommand(string $jobId): array
+{
+    $promptFile = '/tmp/opencode-prompt-' . $jobId . '.txt';
+    file_put_contents($promptFile, getReviewPrompt());
+    $cmd = sprintf('opencode run "$(cat %s)" --format json', escapeshellarg($promptFile));
+    return ['cmd' => $cmd, 'promptFile' => $promptFile];
+}
+
 function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bool $showAgent = false, int $timeout = 1800): string
 {
-    global $running;
-    // Load review prompt from file (allows easy tweaking without code changes)
-    static $reviewPrompt = null;
-    if ($reviewPrompt === null) {
-        $promptFile = __DIR__ . '/prompts/review.txt';
-        if (file_exists($promptFile)) {
-            $reviewPrompt = file_get_contents($promptFile);
-            if ($reviewPrompt === false) {
-                $reviewPrompt = 'Analyze the uncommitted changes in this git repository. Run "git diff" to see what changed. For each issue found return JSON: {"file":"path","line":N,"severity":"error|warning|info","message":"description"}. Return empty array if no issues.';
-                verbose_log("review prompt file read failed, using inline fallback", 2);
-            } else {
-                verbose_log("loaded review prompt from {$promptFile} (" . strlen($reviewPrompt) . " bytes)", 3);
-            }
-        } else {
-            $reviewPrompt = 'Analyze the uncommitted changes in this git repository. Run "git diff" to see what changed. For each issue found return JSON: {"file":"path","line":N,"severity":"error|warning|info","message":"description"}. Return empty array if no issues.';
-            verbose_log("review prompt file not found, using inline fallback", 2);
-        }
-    }
-
-    // Build command: opencode analyzes the working directory's changes
-    // Write prompt to temp file to avoid shell quoting issues with special chars
-    // (parentheses, quotes, $, `, etc. in the prompt break sh -c quoting)
-    $promptFile = '/tmp/opencode-prompt-' . $jobId . '.txt';
-    file_put_contents($promptFile, $reviewPrompt);
-
-    // Use bash -c with $(cat ...) to read prompt from file - avoids all escaping issues
-    // --format default enables streaming-compatible output with the subagent-reporter plugin
-    $opencodeCmd = sprintf(
-        'cd %s && git diff --name-only && git diff && opencode run "$(cat %s)" --format default',
-        escapeshellarg($dir),
-        escapeshellarg($promptFile)
-    );
-
-    verbose_log("runOpencodeAnalysis: executing analysis in {$dir}" . ($showAgent ? ' [streaming]' : ''), 3);
-
     global $running, $verbose, $logFile;
 
-    // When showAgent is enabled, use proc_open with streaming
-    $interrupt = null;
-    if ($showAgent) {
-        // Interrupt pipe: signal handler writes here to wake up stream_select() immediately
-        $interruptSockets = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
-        if ($interruptSockets === false) {
-            verbose_log("runOpencodeAnalysis: failed to create interrupt pipe, falling back to buffered", 1);
-            $showAgent = false;
-        } else {
-            stream_set_blocking($interruptSockets[0], false);
-            stream_set_blocking($interruptSockets[1], false);
-            $GLOBALS['interruptWriteFd'] = $interruptSockets[1];
-            $interrupt = $interruptSockets;
+    ['cmd' => $opencodeCmd, 'promptFile' => $promptFile] = prepareOpencodeCommand($jobId);
+
+    // Log what changed — kept OUT of the analyzed command output so diff
+    // content can never be mistaken for review findings by the parsers
+    if ($verbose >= 2) {
+        $changed = trim((string)shell_exec('cd ' . escapeshellarg($dir) . ' && git diff --name-only 2>/dev/null'));
+        verbose_log("runOpencodeAnalysis: changed files: " . ($changed !== '' ? str_replace("\n", ', ', $changed) : '(none)'), 2);
+        if ($verbose >= 4) {
+            verbose_raw('working_tree_diff', (string)shell_exec('cd ' . escapeshellarg($dir) . ' && git diff 2>/dev/null'));
         }
     }
 
-    // Streaming path: only when interrupt pipe was successfully created
-    if ($showAgent && $interrupt !== null) {
-        $desc = [
-            0 => ['pipe', 'r'],  // stdin
-            1 => ['pipe', 'w'],  // stdout
-            2 => ['pipe', 'w'],  // stderr (capture but don't stream separately)
-        ];
+    // Stream live when --show-agent is set, or at -vvvv (RAW = everything)
+    $stream = $showAgent || $verbose >= 4;
 
-        $proc = proc_open($opencodeCmd, $desc, $pipes, $dir);
+    // The model (MiniMax-M2 via SGLang) occasionally emits its tool-call markup
+    // as plain text and then ends the turn mid-review — a server-side tool-call
+    // parse leak. When we detect that, re-run the review (the PR baseline is the
+    // committed snapshot, so `git diff _base HEAD` is stable across attempts and
+    // in-place fixes converge idempotently). Tunable via OPENCODE_MAX_ATTEMPTS
+    // (default 3, i.e. 2 retries).
+    $maxAttempts = max(1, (int)(getenv('OPENCODE_MAX_ATTEMPTS') ?: 3));
+    $result = '';
 
-        if ($proc === false) {
-            verbose_log("runOpencodeAnalysis: proc_open failed", 1);
-            return '';
-        }
+    try {
+        for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+            $suffix = ($stream ? ' [streaming]' : '') . ($attempt > 1 ? " (attempt {$attempt}/{$maxAttempts})" : '');
+            verbose_log("runOpencodeAnalysis: executing analysis in {$dir}{$suffix}", 3);
 
-        // Set stdout to non-blocking for streaming reads
-        stream_set_blocking($pipes[1], false);
+            $run = runStreamedCommand($opencodeCmd, $dir, $timeout, $stream);
 
-        // --- Timeout enforcement via SIGALRM ---
-        $timedOut = false;
-        $alarmHandler = function (int $signo) use ($proc, &$timedOut, $timeout): void {
-            if ($timedOut) { return; }
-            $timedOut = true;
-            verbose_log("runOpencodeAnalysis: timeout reached ({$timeout}s), terminating opencode process", 1);
-            proc_terminate($proc, SIGTERM);
-        };
-        pcntl_async_signals(true);
-        pcntl_signal(SIGALRM, $alarmHandler);
-        if ($timeout > 0) {
-            pcntl_alarm($timeout);
-        }
-
-        $result = streamOpencodeOutput($pipes[1], $interrupt[0], $verbose, $logFile, $timeout);
-
-        // Cancel the alarm (process finished before timeout)
-        pcntl_alarm(0);
-        pcntl_signal(SIGALRM, SIG_DFL);
-
-        // Read any remaining stderr
-        $stderr = '';
-        if (!feof($pipes[2])) {
-            $stderr = stream_get_contents($pipes[2]);
-            if ($stderr !== false && $stderr !== '') {
-                verbose_raw("opencode_stderr", $stderr);
+            if (!$running || $run['interrupted']) {
+                verbose_log("runOpencodeAnalysis: shutdown requested during analysis, discarding output", 2);
+                return '';
             }
+            if ($run['stderr'] !== '') {
+                verbose_raw("opencode_stderr", $run['stderr']);
+            }
+            $result = $run['output'];
+
+            if ($run['timedOut']) {
+                // A timeout is not a parse leak — keep whatever partial we have
+                verbose_log("runOpencodeAnalysis: analysis timed out after {$timeout}s, using partial output", 1);
+                break;
+            }
+
+            if (looksLikeLeakedToolCall($result) && $attempt < $maxAttempts) {
+                verbose_log("runOpencodeAnalysis: output ended on leaked tool-call markup (model/SGLang tool-parse leak); retrying fresh (" . ($attempt + 1) . "/{$maxAttempts})", 1);
+                usleep(500000); // brief backoff before retry
+                if (function_exists('pcntl_signal_dispatch')) {
+                    pcntl_signal_dispatch();
+                }
+                // @phpstan-ignore-next-line — $running is mutated by the async signal handler
+                if (!$running) {
+                    return '';
+                }
+                continue;
+            }
+
+            if (looksLikeLeakedToolCall($result)) {
+                verbose_log("runOpencodeAnalysis: output still shows leaked tool-call markup after {$maxAttempts} attempts; using best-effort partial", 1);
+            }
+            break;
         }
-
-        // Clean up pipes
-        foreach ($pipes as $pipe) {
-            fclose($pipe);
-        }
-
-        // Clean up interrupt pipe and clear global
-        if (is_array($interrupt)) {
-            @fclose($interrupt[0]);
-            @fclose($interrupt[1]);
-        }
-        unset($GLOBALS['interruptWriteFd']);
-
-        $exitCode = proc_close($proc);
-
-        if (!$running) {
-            verbose_log("runOpencodeAnalysis: shutdown requested during streaming, discarding output", 2);
-            return '';
-        }
-
-        verbose_log("runOpencodeAnalysis: streaming completed (exit={$exitCode}), output length=" . strlen($result), 3);
-
-        // At level 4 (RAW), log the full opencode output for debugging
-        // (already streamed, but log the full accumulated output for log file)
-        if (strlen($result) > 0 && $verbose >= 4) {
-            verbose_markdown("opencode_output", $result);
-        }
-
-        return $result;
+    } finally {
+        @unlink($promptFile);
     }
 
-    // Standard buffered execution (original behavior)
-    $output = [];
-    $ret = 0;
-    exec($opencodeCmd . ' 2>&1', $output, $ret);
-
-    if (!$running) {
-        verbose_log("runOpencodeAnalysis: shutdown requested during exec, discarding output", 2);
-        return '';
-    }
-
-    $result = implode("\n", $output);
     verbose_log("runOpencodeAnalysis: completed, output length=" . strlen($result), 3);
 
-    // At level 4 (RAW), log the full opencode output for debugging
-    if (strlen($result) > 0) {
+    // At level 4 (RAW) without live streaming, log the full opencode output
+    // (when streaming, every line was already displayed and --log'd live)
+    if (strlen($result) > 0 && $verbose >= 4 && !$stream) {
         verbose_markdown("opencode_output", $result);
     }
 
@@ -1756,6 +1975,7 @@ function parseAnalysisOutput(string $rawOutput, bool $showAllIssues = false): ar
         return $issues;
     }
 
+    $rawOutput = stripLeakedToolCalls(stripAnsi($rawOutput));
     $hadValidParse = false;
     $fullText = '';
 
@@ -1789,6 +2009,28 @@ function parseAnalysisOutput(string $rawOutput, bool $showAllIssues = false): ar
                     } elseif (isset($json['file']) || isset($json['line'])) {
                         $issues[] = normalizeIssue($json);
                     }
+                }
+            }
+        }
+    }
+
+    // With --format default the output is plain text (no NDJSON events at
+    // all) — treat the entire raw output as the review text
+    if ($fullText === '') {
+        $fullText = $rawOutput;
+        // A ```json block may appear directly in the plain-text output too
+        if (preg_match('/```json\s*(\[[\s\S]*?\]|\{[\s\S]*?\})\s*```/', $fullText, $matches)) {
+            $json = json_decode($matches[1], true);
+            if (is_array($json)) {
+                $hadValidParse = true;
+                if (isset($json[0]) && is_array($json[0])) {
+                    foreach ($json as $issue) {
+                        if (is_array($issue) && (isset($issue['severity']) || isset($issue['line']) || isset($issue['message']))) {
+                            $issues[] = normalizeIssue($issue);
+                        }
+                    }
+                } elseif (isset($json['file']) || isset($json['line'])) {
+                    $issues[] = normalizeIssue($json);
                 }
             }
         }
@@ -1842,7 +2084,7 @@ function normalizeIssue(array $issue): array
     $sev = strtolower($normalized['severity']);
     if (in_array($sev, ['critical', 'crit', 'blocker', 'error'], true)) {
         $normalized['severity'] = 'critical';
-    } elseif (in_array($sev, ['major', 'error'], true)) {
+    } elseif ($sev === 'major') {
         $normalized['severity'] = 'major';
     } elseif (in_array($sev, ['minor', 'warning', 'warn'], true)) {
         $normalized['severity'] = 'minor';
@@ -1891,15 +2133,15 @@ function parseMarkdownIssues(string $text): array
 
         if (preg_match('/^#{1,6}\s*([🔴🟠🟡🟢])\s+(.+?)(?:[\s—–-]+([^:\s]+):(\d+))?$/u', $line, $matches)) {
             // Save previous issue (if any) before starting new one
-    if ($currentIssue !== null) {
-        // Only overwrite message with description if there IS a description; otherwise keep title
-        if (!empty($currentDescription)) {
-            $currentIssue['message'] = trim(implode("\n", $currentDescription));
-        }
-        if ($currentIssue['message'] !== '') {
-            $issues[] = $currentIssue;
-        }
-    }
+            if ($currentIssue !== null) {
+                // Only overwrite message with description if there IS a description; otherwise keep title
+                if (!empty($currentDescription)) {
+                    $currentIssue['message'] = trim(implode("\n", $currentDescription));
+                }
+                if ($currentIssue['message'] !== '') {
+                    $issues[] = $currentIssue;
+                }
+            }
 
             $emoji = $matches[1];
             $title = trim($matches[2]);
@@ -1953,7 +2195,9 @@ function parseMarkdownIssues(string $text): array
 function postPrComment(string $token, string $repo, int $prNumber, string $body): string
 {
     [$owner, $repoName] = explode('/', $repo, 2);
-    $url = "https://api.github.com/repos/{$owner}/{$repoName}/pulls/{$prNumber}/comments";
+    // General PR comments use the issues endpoint; POSTing a body-only payload
+    // to /pulls/{n}/comments (a review-comment endpoint) is rejected with 422
+    $url = "https://api.github.com/repos/{$owner}/{$repoName}/issues/{$prNumber}/comments";
 
     $data = ['body' => $body];
     $json = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
@@ -2061,7 +2305,7 @@ function handleFailure(array $job, string $reason): void
     $retryCount = (int)($job['retry_count'] ?? 0);
 
     if ($retryCount >= MAX_RETRIES) {
-        error_log("github-code-review: job {$job['id']} exceeded max retries ({MAX_RETRIES}), discarding: {$reason}");
+        error_log("github-code-review: job {$job['id']} exceeded max retries (" . MAX_RETRIES . "), discarding: {$reason}");
         return;
     }
 
@@ -2080,5 +2324,7 @@ function handleFailure(array $job, string $reason): void
     CodeReviewQueue::requeue($job);
 }
 
-// Run the worker
-main();
+// Run the worker (only when executed directly — not when include()d by tests)
+if ($__directRun) {
+    main();
+}

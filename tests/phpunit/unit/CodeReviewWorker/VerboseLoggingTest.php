@@ -8,15 +8,11 @@ use PHPUnit\Framework\TestCase;
 class VerboseLoggingTest extends TestCase
 {
     private string $tempLogFile;
-    private int $originalVerbose;
-    private ?string $originalLogFile;
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->tempLogFile = tempnam(sys_get_temp_dir(), 'test_log_');
-        $this->originalVerbose = 0;
-        $this->originalLogFile = null;
     }
 
     protected function tearDown(): void
