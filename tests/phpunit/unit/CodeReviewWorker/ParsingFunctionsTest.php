@@ -234,9 +234,6 @@ class ParsingFunctionsTest extends TestCase
 
     public function testParseMarkdownIssuesWithOrangeMajorEmoji(): void
     {
-        // PCRE in this test environment doesn't match emoji character class [🟠] even with /u flag
-        $this->markTestSkipped('PCRE emoji character class not supported in this environment');
-
         $markdown = "#### 🟠 Missing Error Handling — include/file.php:42\n";
         $issues = $this->parseMarkdownIssues($markdown);
 
@@ -249,9 +246,6 @@ class ParsingFunctionsTest extends TestCase
 
     public function testParseMarkdownIssuesWithYellowMinorEmoji(): void
     {
-        // PCRE in this test environment doesn't match emoji character class [🟡] even with /u flag
-        $this->markTestSkipped('PCRE emoji character class not supported in this environment');
-
         $markdown = "#### 🟡 Code Style Issue — include/file.php:100\n";
         $issues = $this->parseMarkdownIssues($markdown);
 
@@ -263,9 +257,6 @@ class ParsingFunctionsTest extends TestCase
 
     public function testParseMarkdownIssuesWithGreenInfoEmoji(): void
     {
-        // PCRE in this test environment doesn't match emoji character class [🟢] even with /u flag
-        $this->markTestSkipped('PCRE emoji character class not supported in this environment');
-
         $markdown = "#### 🟢 Nitpick Comment — README.md:1\n";
         $issues = $this->parseMarkdownIssues($markdown);
 

@@ -269,11 +269,12 @@ function parseOpencodeEventLine(string $line, int $verbose = 4): ?string
  * Stream opencode output in real-time, parsing NDJSON lines and displaying them
  *
  * @param resource $stdout Pipe from proc_open
+ * @param resource $interruptFd Interrupt pipe read end — signal handler writes here to wake stream_select()
  * @param int $verbose Verbosity level
  * @param string|null $logFile Optional log file path
  * @return string Accumulated raw output
  */
-function streamOpencodeOutput($stdout, int $verbose, ?string $logFile = null, int $timeout = 0): string
+function streamOpencodeOutput($stdout, $interruptFd, int $verbose, ?string $logFile = null, int $timeout = 0): string
 {
     $accumulated = '';
     $renderer = null;
@@ -291,9 +292,10 @@ function streamOpencodeOutput($stdout, int $verbose, ?string $logFile = null, in
     $deadline = $startTime + $timeoutSecs;
 
     while (!feof($stdout)) {
+        global $running;
         // Calculate remaining time for this select call
         $remaining = max(1, (int)($deadline - microtime(true)));
-        $read = [$stdout];
+        $read = [$stdout, $interruptFd];
         $write = null;
         $except = null;
         $changed = @stream_select($read, $write, $except, 1, 0); // 1 second timeout + microseconds
@@ -309,6 +311,16 @@ function streamOpencodeOutput($stdout, int $verbose, ?string $logFile = null, in
                 break;
             }
             continue; // No data ready yet, loop and try again
+        }
+
+        // Check if interrupt pipe fired (SIGINT/SIGTERM) — must be first
+        if (in_array($interruptFd, $read, true)) {
+            // Drain the interrupt byte(s)
+            do { $b = fgets($interruptFd); } while ($b !== false && !feof($interruptFd));
+            if (!$running) {
+                verbose_log("streamOpencodeOutput: shutdown requested, stopping", 2);
+                break;
+            }
         }
 
         $line = fgets($stdout);
@@ -466,36 +478,79 @@ function applyPRDiff(string $checkoutPath, ?string $diff): bool
         // Try multiple strategies in order of preference
         // Strategy order: most reliable first, least desperate last
         $strategies = [
-            // Strategy 1: patch command first - most lenient, handles binary files, long lines, etc.
+            // Strategy 1: patch --dry-run to validate, then patch for real if validation passes
+            // Split into two steps so we don't run real patch as part of same && chain
             [
-                'cmd' => 'patch -p1 --no-backup-if-mismatch --dry-run < %s 2>&1 && patch -p1 --no-backup-if-mismatch < %s',
-                'label' => 'patch-dryrun-then-apply',
-                'doubleFile' => true,
+                'label' => 'patch-dryrun',
             ],
-            // Strategy 2: git apply with --binary (required for binary file changes)
+            // Strategy 2: git apply with --3way (requires base in repo for best results)
+            [
+                'cmd' => 'git apply --3way --whitespace=nowarn %s 2>&1',
+                'label' => 'git-apply-3way',
+            ],
+            // Strategy 3: git apply with --whitespace=fix (auto-fix whitespace issues)
+            [
+                'cmd' => 'git apply --whitespace=fix %s 2>&1',
+                'label' => 'git-apply-whitespace-fix',
+            ],
+            // Strategy 4: git apply binary (handles binary file mode changes)
             [
                 'cmd' => 'git apply --binary --3way --whitespace=nowarn %s 2>&1',
                 'label' => 'git-apply-binary-3way',
             ],
-            // Strategy 3: git apply binary without 3way (pure binary apply)
+            // Strategy 5: plain git apply ignoring whitespace
             [
-                'cmd' => 'git apply --binary --whitespace=nowarn --ignore-whitespace %s 2>&1',
-                'label' => 'git-apply-binary-ignorews',
-            ],
-            // Strategy 4: git apply with --whitespace=fix (auto-fix whitespace issues)
-            [
-                'cmd' => 'git apply --whitespace=fix %s 2>&1',
-                'label' => 'git-apply-whitespace-fix',
+                'cmd' => 'git apply --whitespace=nowarn --ignore-whitespace %s 2>&1',
+                'label' => 'git-apply-ignorews',
             ],
         ];
 
         $lastOutput = '';
 
         foreach ($strategies as $strategy) {
+            // Strategy 1: separate dry-run step, then real patch only if dry-run succeeded
+            if ($strategy['label'] === 'patch-dryrun') {
+                $dryRunCmd = sprintf(
+                    'cd %s && patch -p1 --no-backup-if-mismatch --dry-run < %s 2>&1',
+                    escapeshellarg($checkoutPath),
+                    escapeshellarg($diffFile)
+                );
+                $output = [];
+                $ret = 0;
+                exec($dryRunCmd, $output, $ret);
+                $dryRunOutput = implode("\n", $output);
+
+                if ($ret !== 0) {
+                    verbose_log("applyPRDiff: patch --dry-run failed: " . substr($dryRunOutput, 0, 200), 3);
+                    continue; // try next strategy
+                }
+
+                // Dry-run passed — now apply for real
+                verbose_log("applyPRDiff: patch --dry-run passed, applying for real...", 3);
+                $applyCmd = sprintf(
+                    'cd %s && patch -p1 --no-backup-if-mismatch < %s 2>&1',
+                    escapeshellarg($checkoutPath),
+                    escapeshellarg($diffFile)
+                );
+                $output = [];
+                $ret = 0;
+                exec($applyCmd, $output, $ret);
+                $applyOutput = implode("\n", $output);
+
+                if ($ret === 0) {
+                    verbose_log("applyPRDiff: diff applied successfully (strategy: patch)", 3);
+                    return true;
+                }
+
+                verbose_log("applyPRDiff: patch --dry-run passed but real patch failed: " . substr($applyOutput, 0, 200), 3);
+                $lastOutput = $applyOutput;
+                continue; // try next strategy
+            }
+
+            // Remaining strategies use a single command
             $cmd = sprintf(
                 'cd %s && ' . $strategy['cmd'],
                 escapeshellarg($checkoutPath),
-                escapeshellarg($diffFile),
                 escapeshellarg($diffFile)
             );
 
@@ -562,11 +617,18 @@ if (function_exists('pcntl_signal')) {
         global $running;
         $running = false;
         verbose_log("received SIGINT, shutting down...", 1);
+        // Wake up stream_select() immediately so the loop exits
+        if (isset($GLOBALS['interruptWriteFd']) && is_resource($GLOBALS['interruptWriteFd'])) {
+            @fwrite($GLOBALS['interruptWriteFd'], "i");
+        }
     });
     pcntl_signal(SIGTERM, function () {
         global $running;
         $running = false;
         verbose_log("received SIGTERM, shutting down...", 1);
+        if (isset($GLOBALS['interruptWriteFd']) && is_resource($GLOBALS['interruptWriteFd'])) {
+            @fwrite($GLOBALS['interruptWriteFd'], "t");
+        }
     });
 }
 
@@ -764,6 +826,11 @@ function processJob(array $job): string
         }
 
         // Step 3: Initialize git repo and run opencode analysis on the modified working dir
+        // Reset checkout to clean state before analysis (important for cached checkouts)
+        if (!resetCheckoutToCleanState($checkoutPath, $baseBranch)) {
+            return 'checkout reset failed';
+        }
+
         initGitRepo($checkoutPath);
 
         verbose_log("starting opencode analysis for {$repo}#{$prNumber} in {$checkoutPath}" . ($opencodeTimeout > 0 ? " (timeout: " . ($opencodeTimeout >= 3600 ? round($opencodeTimeout/3600,1)."h" : round($opencodeTimeout/60,1)."m") . ")" : ""), 2);
@@ -1176,6 +1243,114 @@ function extractFixedContent(array $data, string $file): ?string
 
     return null;
 }
+/**
+ * Redis-backed checkout cache: reuse repo checkouts for up to 24 hours.
+ *
+ * Key:    github:checkout:v1:{repo}:{branch}  →  value: absolute path
+ * TTL:    86400 seconds (24 hours)
+ * Prefix: github:checkout:v1:
+ */
+
+// Singleton Redis connection for checkout cache
+$checkoutRedis = null;
+
+function getCheckoutRedis(): ?\Predis\Client
+{
+    global $checkoutRedis;
+    if ($checkoutRedis !== null) {
+        return $checkoutRedis;
+    }
+    try {
+        $host = defined('REDIS_HOST') && REDIS_HOST !== '' ? REDIS_HOST : (getenv('REDIS_HOST') ?: '67.217.60.234');
+        $port = defined('REDIS_PORT') && REDIS_PORT !== '' ? (int)REDIS_PORT : (int)(getenv('REDIS_PORT') ?: 6379);
+        $checkoutRedis = new \Predis\Client(['host' => $host, 'port' => $port, 'read_write_timeout' => 2]);
+        // Probe with a ping — if it throws, don't use the cache
+        $checkoutRedis->ping();
+        return $checkoutRedis;
+    } catch (\Throwable $e) {
+        verbose_log("checkout cache: Redis unavailable ({$e->getMessage()}), cache disabled", 1);
+        $checkoutRedis = null;
+        return null;
+    }
+}
+
+/**
+ * Get a cached checkout path for a repo+branch, or null if not cached / invalid.
+ */
+function getCachedCheckoutPath(string $repo, string $branch): ?string
+{
+    $redis = getCheckoutRedis();
+    if ($redis === null) {
+        return null;
+    }
+    $key = "github:checkout:v1:{$repo}:{$branch}";
+    $path = $redis->get($key);
+    if ($path === null || $path === false) {
+        return null;
+    }
+    // Validate: path must exist, be a git repo, and have correct branch checked out
+    if (!is_dir($path) || !is_dir("{$path}/.git")) {
+        return null;
+    }
+    // Verify branch matches
+    $currentBranch = trim((string)shell_exec("cd " . escapeshellarg($path) . " && git rev-parse --abbrev-ref HEAD 2>/dev/null"));
+    if ($currentBranch !== $branch) {
+        verbose_log("checkout cache: branch mismatch for {$repo}:{$branch} (cached: {$currentBranch}), invalidating", 2);
+        $redis->del($key);
+        return null;
+    }
+    return $path;
+}
+
+/**
+ * Store a checkout path in the cache with 24h TTL.
+ */
+function cacheCheckoutPath(string $repo, string $branch, string $path): void
+{
+    $redis = getCheckoutRedis();
+    if ($redis === null) {
+        return;
+    }
+    $key = "github:checkout:v1:{$repo}:{$branch}";
+    $redis->setex($key, 86400, $path);
+    verbose_log("checkout cached: {$repo}:{$branch} → {$path} (TTL=24h)", 3);
+}
+
+/**
+ * Invalidate a cached checkout for a repo+branch.
+ */
+function invalidateCachedCheckout(string $repo, string $branch): void
+{
+    $redis = getCheckoutRedis();
+    if ($redis === null) {
+        return;
+    }
+    $key = "github:checkout:v1:{$repo}:{$branch}";
+    $redis->del($key);
+}
+
+/**
+ * Reset a cached checkout to clean state: hard-reset working tree and
+ * ensure correct branch is checked out. This is called before each PR
+ * analysis to ensure a pristine base.
+ */
+function resetCheckoutToCleanState(string $checkoutPath, string $baseBranch): bool
+{
+    $cmd = sprintf(
+        'cd %s && git reset --hard HEAD 2>&1 && git checkout %s 2>&1',
+        escapeshellarg($checkoutPath),
+        escapeshellarg($baseBranch)
+    );
+    $output = [];
+    $ret = 0;
+    exec($cmd, $output, $ret);
+    if ($ret !== 0) {
+        verbose_log("resetCheckoutToCleanState: failed for {$checkoutPath}: " . substr(implode("\n", $output), 0, 200), 1);
+        return false;
+    }
+    verbose_log("resetCheckoutToCleanState: {$checkoutPath} reset to clean {$baseBranch}", 3);
+    return true;
+}
 
 /**
  * Initialize git repo in checkout directory for diff generation
@@ -1295,6 +1470,33 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
         return 'shutdown';
     }
 
+    // Try to reuse a cached checkout — caller will reset to clean state before analysis
+    $cachedPath = getCachedCheckoutPath($repo, $branch);
+    if ($cachedPath !== null) {
+        // Cache hit: the path already has the correct branch checked out.
+        // Sync with remote to pick up new commits, then use it.
+        verbose_log("checkoutBranch: cache hit for {$repo}:{$branch} at {$cachedPath} - syncing with remote", 2);
+        $syncCmd = sprintf(
+            'cd %s && git fetch origin %s 2>&1 && git checkout %s 2>&1',
+            escapeshellarg($cachedPath),
+            escapeshellarg($branch),
+            escapeshellarg($branch)
+        );
+        $syncOutput = [];
+        $syncRet = 0;
+        exec($syncCmd, $syncOutput, $syncRet);
+        verbose_raw("checkout_cache_sync", "cmd: {$syncCmd}\noutput: " . implode("\n", $syncOutput) . "\nret: {$syncRet}");
+        if ($syncRet === 0) {
+            verbose_log("checkoutBranch: cache hit reused (synced) for {$repo}:{$branch}", 2);
+            // Refresh TTL on reuse so frequently-used checkouts don't expire
+            cacheCheckoutPath($repo, $branch, $cachedPath);
+            return 'true';
+        }
+        // Sync failed — fall through to fresh clone
+        verbose_log("checkoutBranch: cache sync failed for {$repo}:{$branch}, will re-clone", 2);
+    }
+
+    // No cache or cache miss — do a fresh clone
     // Create parent directory if needed
     $parentDir = dirname($checkoutPath);
     if (!is_dir($parentDir)) {
@@ -1396,6 +1598,8 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
     }
 
     verbose_log("checkoutBranch: success", 2);
+    // Cache the successful checkout for future reuse (24h TTL)
+    cacheCheckoutPath($repo, $branch, $checkoutPath);
     return 'true';
 }
 
@@ -1450,7 +1654,23 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bo
     global $running, $verbose, $logFile;
 
     // When showAgent is enabled, use proc_open with streaming
+    $interrupt = null;
     if ($showAgent) {
+        // Interrupt pipe: signal handler writes here to wake up stream_select() immediately
+        $interruptSockets = stream_socket_pair(STREAM_PF_UNIX, STREAM_SOCK_STREAM, STREAM_IPPROTO_IP);
+        if ($interruptSockets === false) {
+            verbose_log("runOpencodeAnalysis: failed to create interrupt pipe, falling back to buffered", 1);
+            $showAgent = false;
+        } else {
+            stream_set_blocking($interruptSockets[0], false);
+            stream_set_blocking($interruptSockets[1], false);
+            $GLOBALS['interruptWriteFd'] = $interruptSockets[1];
+            $interrupt = $interruptSockets;
+        }
+    }
+
+    // Streaming path: only when interrupt pipe was successfully created
+    if ($showAgent && $interrupt !== null) {
         $desc = [
             0 => ['pipe', 'r'],  // stdin
             1 => ['pipe', 'w'],  // stdout
@@ -1481,7 +1701,7 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bo
             pcntl_alarm($timeout);
         }
 
-        $result = streamOpencodeOutput($pipes[1], $verbose, $logFile, $timeout);
+        $result = streamOpencodeOutput($pipes[1], $interrupt[0], $verbose, $logFile, $timeout);
 
         // Cancel the alarm (process finished before timeout)
         pcntl_alarm(0);
@@ -1500,6 +1720,13 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bo
         foreach ($pipes as $pipe) {
             fclose($pipe);
         }
+
+        // Clean up interrupt pipe and clear global
+        if (is_array($interrupt)) {
+            @fclose($interrupt[0]);
+            @fclose($interrupt[1]);
+        }
+        unset($GLOBALS['interruptWriteFd']);
 
         $exitCode = proc_close($proc);
 
