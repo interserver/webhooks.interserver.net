@@ -1475,11 +1475,11 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
     // Use git clone directly (not gh repo clone) — gh repo clone creates
     // incomplete clones where commit objects are missing from the pack file,
     // causing "bad object HEAD" and "corrupt patch" errors during apply.
-    // We pass --depth 1 for faster clones since we only need the base branch.
+    // gh auth uses SSH, so use git@github.com: URL.
     $cloneCmd = sprintf(
         'git clone --depth 1 --branch %s -- %s %s 2>&1',
         escapeshellarg($branch),
-        escapeshellarg("https://github.com/{$repo}.git"),
+        escapeshellarg("git@github.com:{$repo}.git"),
         escapeshellarg($checkoutPath)
     );
 
@@ -1526,7 +1526,7 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
         $cloneCmd = sprintf(
             'git clone --depth 1 --branch %s -- %s %s 2>&1',
             escapeshellarg($branch),
-            escapeshellarg("https://github.com/{$repo}.git"),
+            escapeshellarg("git@github.com:{$repo}.git"),
             escapeshellarg($checkoutPath)
         );
         exec($cloneCmd, $cloneOutput, $cloneRet);
