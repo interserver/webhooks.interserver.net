@@ -40,9 +40,9 @@ $verbose = 0;
 $running = true;
 $logFile = null;
 $optind = 0;
-$args = getopt('vhwb:a:', ['verbose', 'help', 'wait-if-empty', 'review-bots', 'show-agent', 'show-all-issues', 'log::'], $optind);
+$args = getopt('vhwb:a:', ['verbose', 'help', 'wait-if-empty', 'review-bots', 'show-agent', 'show-all-issues', 'timeout:', 'log::'], $optind);
 if (isset($args['h']) || isset($args['help'])) {
-    fwrite(STDOUT, "Usage: php scripts/github-code-review.php [-v|--verbose]... [-w|--wait-if-empty] [-b|--review-bots] [-a|--show-agent] [--show-all-issues] [--log=FILE]\n");
+    fwrite(STDOUT, "Usage: php scripts/github-code-review.php [-v|--verbose]... [-w|--wait-if-empty] [-b|--review-bots] [-a|--show-agent] [--show-all-issues] [--timeout=30m] [--log=FILE]\n");
     fwrite(STDOUT, "  -v, --verbose      Increase verbosity (can stack: -vv, -vvv, -vvvv)\n");
     fwrite(STDOUT, "    -v   [INFO]     Essential progress (job start/complete/errors)\n");
     fwrite(STDOUT, "    -vv  [DEBUG]    Detailed progress (checkpoints, function entry)\n");
@@ -52,6 +52,7 @@ if (isset($args['h']) || isset($args['help'])) {
     fwrite(STDOUT, "  -b, --review-bots    Also review PRs from bots like dependabot (default: skip)\n");
     fwrite(STDOUT, "  -a, --show-agent      Stream opencode agent messages in real-time (colorized at -vvvv)\n");
     fwrite(STDOUT, "  --show-all-issues     Include issues without file/line in report (default: skip summary sections)\n");
+    fwrite(STDOUT, "  --timeout=N           Timeout for opencode analysis (default: 30m). Examples: 30, 30s, 30m\n");
     fwrite(STDOUT, "  --log=FILE            Append all log output to FILE (in addition to stderr)\n");
     fwrite(STDOUT, "  -h, --help        Show this help message\n");
     fwrite(STDOUT, "\n  Press Ctrl-C to exit gracefully at any time.\n");
@@ -67,6 +68,28 @@ $waitIfEmpty = isset($args['w']) || isset($args['wait-if-empty']);
 $reviewBots = isset($args['b']) || isset($args['review-bots']);
 $showAgent = isset($args['a']) || isset($args['show-agent']);
 $showAllIssues = isset($args['show-all-issues']);
+
+// Parse timeout: bare number = seconds, number + s = seconds, number + m = minutes
+$opencodeTimeout = 30 * 60; // default: 30 minutes in seconds
+if (isset($args['timeout'])) {
+    $raw = is_array($args['timeout']) ? $args['timeout'][0] : $args['timeout'];
+    if ($raw !== false && $raw !== '') {
+        $raw = trim($raw);
+        if (preg_match('/^(\d+)([smh])?$/i', $raw, $m)) {
+            $val = (int)$m[1];
+            $unit = strtolower($m[2] ?? '');
+            if ($unit === 'm') {
+                $opencodeTimeout = $val * 60;
+            } elseif ($unit === 'h') {
+                $opencodeTimeout = $val * 3600;
+            } else {
+                $opencodeTimeout = $val; // bare number = seconds
+            }
+        } else {
+            fwrite(STDERR, "github-code-review: invalid --timeout value '{$raw}', using default 30m\n");
+        }
+    }
+}
 if (isset($args['log'])) {
     $logFile = $args['log'] !== false ? $args['log'] : 'github-code-review.log';
 }
@@ -250,10 +273,11 @@ function parseOpencodeEventLine(string $line, int $verbose = 4): ?string
  * @param string|null $logFile Optional log file path
  * @return string Accumulated raw output
  */
-function streamOpencodeOutput($stdout, int $verbose, ?string $logFile = null): string
+function streamOpencodeOutput($stdout, int $verbose, ?string $logFile = null, int $timeout = 0): string
 {
     $accumulated = '';
     $renderer = null;
+    $startTime = microtime(true);
 
     if ($verbose >= 4) {
         try {
@@ -263,7 +287,30 @@ function streamOpencodeOutput($stdout, int $verbose, ?string $logFile = null): s
         }
     }
 
+    $timeoutSecs = $timeout > 0 ? $timeout : 86400; // default 24h if no timeout
+    $deadline = $startTime + $timeoutSecs;
+
     while (!feof($stdout)) {
+        // Calculate remaining time for this select call
+        $remaining = max(1, (int)($deadline - microtime(true)));
+        $read = [$stdout];
+        $write = null;
+        $except = null;
+        $changed = @stream_select($read, $write, $except, 1, 0); // 1 second timeout + microseconds
+
+        if ($changed === false) {
+            break; // error on stream
+        }
+
+        if ($changed === 0) {
+            // Timeout on select - check if overall deadline exceeded
+            if (microtime(true) >= $deadline) {
+                verbose_log("streamOpencodeOutput: overall timeout reached ({$timeoutSecs}s), stopping", 1);
+                break;
+            }
+            continue; // No data ready yet, loop and try again
+        }
+
         $line = fgets($stdout);
         if ($line === false) {
             break;
@@ -629,7 +676,7 @@ function main(): void
  */
 function processJob(array $job): string
 {
-    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $opencodeImproveCmd, $verbose, $reviewBots, $running, $showAgent, $showAllIssues;
+    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $opencodeImproveCmd, $verbose, $reviewBots, $running, $showAgent, $showAllIssues, $opencodeTimeout;
 
     // Check if shutdown was requested before starting work
     if (!$running) {
@@ -719,8 +766,8 @@ function processJob(array $job): string
         // Step 3: Initialize git repo and run opencode analysis on the modified working dir
         initGitRepo($checkoutPath);
 
-        verbose_log("starting opencode analysis for {$repo}#{$prNumber} in {$checkoutPath}", 2);
-        $analysisOutput = runOpencodeAnalysis($checkoutPath, $jobId, $opencodeAnalyzeCmd, $showAgent);
+        verbose_log("starting opencode analysis for {$repo}#{$prNumber} in {$checkoutPath}" . ($opencodeTimeout > 0 ? " (timeout: " . ($opencodeTimeout >= 3600 ? round($opencodeTimeout/3600,1)."h" : round($opencodeTimeout/60,1)."m") . ")" : ""), 2);
+        $analysisOutput = runOpencodeAnalysis($checkoutPath, $jobId, $opencodeAnalyzeCmd, $showAgent, $opencodeTimeout);
         verbose_log("analysis command completed", 3);
 
         $issues = parseAnalysisOutput($analysisOutput, $showAllIssues);
@@ -1363,8 +1410,9 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
  * @param string $cmdTemplate Unused, kept for signature compatibility
  * @return string Raw opencode output
  */
-function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bool $showAgent = false): string
+function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bool $showAgent = false, int $timeout = 1800): string
 {
+    global $running;
     // Load review prompt from file (allows easy tweaking without code changes)
     static $reviewPrompt = null;
     if ($reviewPrompt === null) {
@@ -1390,8 +1438,9 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bo
     file_put_contents($promptFile, $reviewPrompt);
 
     // Use bash -c with $(cat ...) to read prompt from file - avoids all escaping issues
+    // --format default enables streaming-compatible output with the subagent-reporter plugin
     $opencodeCmd = sprintf(
-        'cd %s && git diff --name-only && git diff && opencode run "$(cat %s)" --format json',
+        'cd %s && git diff --name-only && git diff && opencode run "$(cat %s)" --format default',
         escapeshellarg($dir),
         escapeshellarg($promptFile)
     );
@@ -1418,7 +1467,25 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bo
         // Set stdout to non-blocking for streaming reads
         stream_set_blocking($pipes[1], false);
 
-        $result = streamOpencodeOutput($pipes[1], $verbose, $logFile);
+        // --- Timeout enforcement via SIGALRM ---
+        $timedOut = false;
+        $alarmHandler = function (int $signo) use ($proc, &$timedOut, $timeout): void {
+            if ($timedOut) { return; }
+            $timedOut = true;
+            verbose_log("runOpencodeAnalysis: timeout reached ({$timeout}s), terminating opencode process", 1);
+            proc_terminate($proc, SIGTERM);
+        };
+        pcntl_async_signals(true);
+        pcntl_signal(SIGALRM, $alarmHandler);
+        if ($timeout > 0) {
+            pcntl_alarm($timeout);
+        }
+
+        $result = streamOpencodeOutput($pipes[1], $verbose, $logFile, $timeout);
+
+        // Cancel the alarm (process finished before timeout)
+        pcntl_alarm(0);
+        pcntl_signal(SIGALRM, SIG_DFL);
 
         // Read any remaining stderr
         $stderr = '';
