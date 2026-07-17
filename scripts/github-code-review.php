@@ -478,76 +478,36 @@ function applyPRDiff(string $checkoutPath, ?string $diff): bool
         // Try multiple strategies in order of preference
         // Strategy order: most reliable first, least desperate last
         $strategies = [
-            // Strategy 1: patch --dry-run to validate, then patch for real if validation passes
-            // Split into two steps so we don't run real patch as part of same && chain
+            // Strategy 1: plain git apply — most reliable when base files exist (they do, we cloned the base branch)
             [
-                'label' => 'patch-dryrun',
+                'cmd' => 'git apply --whitespace=nowarn %s 2>&1',
+                'label' => 'git-apply',
             ],
-            // Strategy 2: git apply with --3way (requires base in repo for best results)
-            [
-                'cmd' => 'git apply --3way --whitespace=nowarn %s 2>&1',
-                'label' => 'git-apply-3way',
-            ],
-            // Strategy 3: git apply with --whitespace=fix (auto-fix whitespace issues)
+            // Strategy 2: git apply with --whitespace=fix (auto-fix whitespace issues)
             [
                 'cmd' => 'git apply --whitespace=fix %s 2>&1',
                 'label' => 'git-apply-whitespace-fix',
             ],
-            // Strategy 4: git apply binary (handles binary file mode changes)
-            [
-                'cmd' => 'git apply --binary --3way --whitespace=nowarn %s 2>&1',
-                'label' => 'git-apply-binary-3way',
-            ],
-            // Strategy 5: plain git apply ignoring whitespace
+            // Strategy 3: git apply ignoring whitespace (handles context drift)
             [
                 'cmd' => 'git apply --whitespace=nowarn --ignore-whitespace %s 2>&1',
                 'label' => 'git-apply-ignorews',
+            ],
+            // Strategy 4: git apply binary (handles binary file mode changes in the diff)
+            [
+                'cmd' => 'git apply --binary --whitespace=nowarn %s 2>&1',
+                'label' => 'git-apply-binary',
+            ],
+            // Strategy 5: patch as last resort — most lenient, handles binary, long lines, etc.
+            [
+                'cmd' => 'patch -p1 --no-backup-if-mismatch < %s 2>&1',
+                'label' => 'patch',
             ],
         ];
 
         $lastOutput = '';
 
         foreach ($strategies as $strategy) {
-            // Strategy 1: separate dry-run step, then real patch only if dry-run succeeded
-            if ($strategy['label'] === 'patch-dryrun') {
-                $dryRunCmd = sprintf(
-                    'cd %s && patch -p1 --no-backup-if-mismatch --dry-run < %s 2>&1',
-                    escapeshellarg($checkoutPath),
-                    escapeshellarg($diffFile)
-                );
-                $output = [];
-                $ret = 0;
-                exec($dryRunCmd, $output, $ret);
-                $dryRunOutput = implode("\n", $output);
-
-                if ($ret !== 0) {
-                    verbose_log("applyPRDiff: patch --dry-run failed: " . substr($dryRunOutput, 0, 200), 3);
-                    continue; // try next strategy
-                }
-
-                // Dry-run passed — now apply for real
-                verbose_log("applyPRDiff: patch --dry-run passed, applying for real...", 3);
-                $applyCmd = sprintf(
-                    'cd %s && patch -p1 --no-backup-if-mismatch < %s 2>&1',
-                    escapeshellarg($checkoutPath),
-                    escapeshellarg($diffFile)
-                );
-                $output = [];
-                $ret = 0;
-                exec($applyCmd, $output, $ret);
-                $applyOutput = implode("\n", $output);
-
-                if ($ret === 0) {
-                    verbose_log("applyPRDiff: diff applied successfully (strategy: patch)", 3);
-                    return true;
-                }
-
-                verbose_log("applyPRDiff: patch --dry-run passed but real patch failed: " . substr($applyOutput, 0, 200), 3);
-                $lastOutput = $applyOutput;
-                continue; // try next strategy
-            }
-
-            // Remaining strategies use a single command
             $cmd = sprintf(
                 'cd %s && ' . $strategy['cmd'],
                 escapeshellarg($checkoutPath),
@@ -1336,8 +1296,10 @@ function invalidateCachedCheckout(string $repo, string $branch): void
  */
 function resetCheckoutToCleanState(string $checkoutPath, string $baseBranch): bool
 {
+    // Use checkout -f instead of reset --hard HEAD to avoid requiring HEAD commit
+    // object to exist in object store (important for incomplete/shallow clones)
     $cmd = sprintf(
-        'cd %s && git reset --hard HEAD 2>&1 && git checkout %s 2>&1',
+        'cd %s && git checkout -f %s 2>&1',
         escapeshellarg($checkoutPath),
         escapeshellarg($baseBranch)
     );
