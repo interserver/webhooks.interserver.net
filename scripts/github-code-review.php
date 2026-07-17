@@ -447,6 +447,11 @@ function getPRDiff(string $repo, int $prNumber): ?string
     }
 
     $diff = implode("\n", $output);
+    // exec() strips the trailing newline from each line, so the last line
+    // (line 1188) has no \n. Append one so git apply sees a complete diff.
+    if ($diff !== '' && substr($diff, -1) !== "\n") {
+        $diff .= "\n";
+    }
     return $diff ?: null;
 }
 
@@ -1296,10 +1301,11 @@ function invalidateCachedCheckout(string $repo, string $branch): void
  */
 function resetCheckoutToCleanState(string $checkoutPath, string $baseBranch): bool
 {
-    // Use checkout -f instead of reset --hard HEAD to avoid requiring HEAD commit
-    // object to exist in object store (important for incomplete/shallow clones)
+    // Reset working tree, staging area, and untracked files so the next
+    // applyPRDiff starts from a completely clean state regardless of whether
+    // the previous run left staged, modified, or new files.
     $cmd = sprintf(
-        'cd %s && git checkout -f %s 2>&1',
+        'cd %s && git checkout -f %s 2>&1 && git reset HEAD 2>&1 && git clean -fd 2>&1',
         escapeshellarg($checkoutPath),
         escapeshellarg($baseBranch)
     );
