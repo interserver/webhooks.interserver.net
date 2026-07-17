@@ -1472,14 +1472,15 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
         cleanupCheckout($checkoutPath);
     }
 
-    // Use gh repo clone which automatically uses gh authentication
-    // Correct syntax: gh repo clone <repository> [<directory>] [-- <gitflags>...]
-    // Directory must come BEFORE '--', branch must come AFTER '--'
+    // Use git clone directly (not gh repo clone) — gh repo clone creates
+    // incomplete clones where commit objects are missing from the pack file,
+    // causing "bad object HEAD" and "corrupt patch" errors during apply.
+    // We pass --depth 1 for faster clones since we only need the base branch.
     $cloneCmd = sprintf(
-        'gh repo clone %s %s -- --branch %s 2>&1',
-        escapeshellarg($repo),
-        escapeshellarg($checkoutPath),
-        escapeshellarg($branch)
+        'git clone --depth 1 --branch %s -- %s %s 2>&1',
+        escapeshellarg($branch),
+        escapeshellarg("https://github.com/{$repo}.git"),
+        escapeshellarg($checkoutPath)
     );
 
     verbose_log("executing: {$cloneCmd}", 3);
@@ -1521,12 +1522,12 @@ function checkoutBranch(string $repo, string $branch, string $checkoutPath): str
             return 'shutdown';
         }
 
-        // Try with --depth 1 passed through to git (after --)
+        // Try git clone --depth 1 (full clone may have network issues)
         $cloneCmd = sprintf(
-            'gh repo clone %s %s -- --depth 1 --branch %s 2>&1',
-            escapeshellarg($repo),
-            escapeshellarg($checkoutPath),
-            escapeshellarg($branch)
+            'git clone --depth 1 --branch %s -- %s %s 2>&1',
+            escapeshellarg($branch),
+            escapeshellarg("https://github.com/{$repo}.git"),
+            escapeshellarg($checkoutPath)
         );
         exec($cloneCmd, $cloneOutput, $cloneRet);
 
