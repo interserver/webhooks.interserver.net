@@ -12,15 +12,6 @@ use Webhooks\Cli\Command\ListCommand;
 
 class ListCommandTest extends TestCase
 {
-    private CommandTester $commandTester;
-
-    protected function setUp(): void
-    {
-        $application = new CliApplication();
-        $command = $application->find('list');
-        $this->commandTester = new CommandTester($command);
-    }
-
     public function testConfigureSetsNameAndDescription(): void
     {
         $application = new CliApplication();

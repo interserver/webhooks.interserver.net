@@ -2,17 +2,29 @@
 declare(strict_types=1);
 
 /**
- * GitHub PR Code Review Worker
+ * GitHub Code Review Worker
  *
- * Processes jobs from the codereview:queue Redis list.
+ * Processes jobs from the codereview:queue Redis list. Each envelope has a
+ * "kind" (default "pr"); three review shapes are supported, and all of them end
+ * with `_base` and HEAD set so that `git diff _base HEAD` is exactly the change
+ * under review and a later plain `git diff` is exactly the agent's in-place fixes:
+ *
+ *   - kind=pr (no options.commit): clone the PR base branch, apply the PR diff,
+ *     and commit it as a snapshot (HEAD = base+PR, _base = base commit).
+ *   - kind=pr WITH options.commit=SHA: review just that one commit
+ *     (_base = SHA^, HEAD = SHA); results still post to the PR.
+ *   - kind=push: review a before..after commit range with no PR; the commits
+ *     are already real, so _base = before_sha (or after_sha^ for a new branch)
+ *     and HEAD = after_sha — no diff apply, no snapshot commit.
+ *
  * For each job:
- *   1. Checkout the PR base branch, apply the PR diff, and commit it as a
- *      snapshot (HEAD = base+PR, _base ref = base commit)
- *   2. Run opencode once to review AND fix the PR changes in place; the agent's
- *      edits stay uncommitted in the working tree
- *   3. Capture the agent's fixes with `git diff` (working tree vs the snapshot)
- *   4. For each issue found, post a PR comment — with the per-file fix diff when
- *      the agent edited that file, otherwise flag-only
+ *   1. Set up the baseline for its kind (above).
+ *   2. Run opencode once to review AND fix the changes in place; the agent's
+ *      edits stay uncommitted in the working tree.
+ *   3. Capture the agent's fixes with `git diff` (working tree vs HEAD).
+ *   4. For each issue found, post a comment (PR comment for pr jobs, commit
+ *      comment for push jobs) — with the per-file fix diff when the agent edited
+ *      that file, otherwise flag-only.
  *
  * Usage:
  *   php scripts/github-code-review.php [-v|--verbose]... [-a|--show-agent]
@@ -804,6 +816,9 @@ const GITHUB_TOKEN = 'GITHUB_TOKEN';
 const CHECKOUT_ROOT = 'CHECKOUT_ROOT';
 const OPENCODE_ANALYZE_CMD = 'OPENCODE_ANALYZE_CMD';
 const MAX_RETRIES = 3;
+// The well-known empty-tree object SHA — used as a baseline when reviewing a
+// root commit that has no parent (brand-new branch's very first commit).
+const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
 $githubToken = getenv(GITHUB_TOKEN) ?: '';
 $ghToken = getenv('GH_TOKEN') ?: '';
@@ -915,25 +930,34 @@ function main(): void
 
         $jobId = $job['id'] ?? 'unknown';
         $repo = $job['repo'] ?? 'unknown';
-        $prNumber = $job['pr_number'] ?? 'unknown';
-        $branch = $job['head_branch'] ?? 'unknown';
+        $kind = CodeReviewQueue::jobKind($job);
 
-        // If branch is "HEAD", look up the actual branch name from GitHub API
-        if ($branch === 'HEAD' || $branch === 'unknown') {
-            $actualBranch = getPRHeadBranch($repo, (int)$prNumber);
-            if ($actualBranch) {
-                verbose_log("resolved HEAD to actual branch: {$actualBranch}", 2);
-                $branch = $actualBranch;
-                $job['head_branch'] = $branch; // Update for processJob
-            } else {
-                verbose_log("could not resolve HEAD branch, using 'main'", 2);
-                $branch = 'main';
-                $job['head_branch'] = $branch;
+        if ($kind === 'push') {
+            $ref = $job['ref'] ?? 'unknown';
+            $after = substr((string)($job['after_sha'] ?? ''), 0, 7);
+            verbose_log("dequeued push job {$jobId}: repo={$repo} ref={$ref} after={$after}", 2);
+            verbose_log("processing push job {$jobId} for {$repo} {$ref}", 1);
+        } else {
+            $prNumber = $job['pr_number'] ?? 'unknown';
+            $branch = $job['head_branch'] ?? 'unknown';
+
+            // If branch is "HEAD", look up the actual branch name from GitHub API
+            if ($branch === 'HEAD' || $branch === 'unknown') {
+                $actualBranch = getPRHeadBranch($repo, (int)$prNumber);
+                if ($actualBranch) {
+                    verbose_log("resolved HEAD to actual branch: {$actualBranch}", 2);
+                    $branch = $actualBranch;
+                    $job['head_branch'] = $branch; // Update for processJob
+                } else {
+                    verbose_log("could not resolve HEAD branch, using 'main'", 2);
+                    $branch = 'main';
+                    $job['head_branch'] = $branch;
+                }
             }
-        }
 
-        verbose_log("dequeued job {$jobId}: repo={$repo} pr={$prNumber} branch={$branch}", 2);
-        verbose_log("processing job {$jobId} for {$repo}#{$prNumber}", 1);
+            verbose_log("dequeued job {$jobId}: repo={$repo} pr={$prNumber} branch={$branch}", 2);
+            verbose_log("processing job {$jobId} for {$repo}#{$prNumber}", 1);
+        }
 
         try {
             $result = processJob($job);
@@ -943,7 +967,7 @@ function main(): void
                 // --only-prep: one job prepared and printed; stop here
                 break;
             } elseif (is_string($result) && str_starts_with($result, 'no_issues')) {
-                verbose_log("no issues found for {$repo}#{$prNumber}", 1);
+                verbose_log("no issues found for {$repo}", 1);
             } elseif ($result === 'shutdown') {
                 // Job was interrupted mid-flight — put it back so it isn't lost
                 verbose_log("job {$jobId} interrupted by shutdown, requeueing and exiting", 1);
@@ -986,7 +1010,7 @@ function main(): void
  */
 function processJob(array $job): string
 {
-    global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $verbose, $reviewBots, $running, $showAgent, $showAllIssues, $opencodeTimeout, $onlyPrep;
+    global $reviewBots, $running;
 
     // Check if shutdown was requested before starting work
     if (!$running) {
@@ -994,29 +1018,59 @@ function processJob(array $job): string
         return 'shutdown';
     }
 
+    $kind = CodeReviewQueue::jobKind($job);
     $repo = $job['repo'] ?? '';
-    $prNumber = (int)($job['pr_number'] ?? 0);
-    $jobId = $job['id'] ?? uniqid('job_');
-    $headBranch = $job['head_branch'] ?? '';
-    $baseBranch = $job['base_branch'] ?? '';
-    $prUrl = $job['pr_url'] ?? '';
+    $jobId = (string)($job['id'] ?? uniqid('job_'));
     $author = $job['author'] ?? '';
-    $isBot = ($job['is_bot'] ?? false) || str_ends_with($author, '[bot]');
-    if ($isBot && !$reviewBots) {
-        verbose_log("skipping bot PR from {$author}", 1);
-        return 'skipped bot PR';
+    $auditTypes = is_array($job['audit_types'] ?? null) ? $job['audit_types'] : ['full'];
+    $options = is_array($job['options'] ?? null) ? $job['options'] : [];
+
+    if ($repo === '') {
+        return 'invalid job: missing repo';
     }
-
-    $sha = $job['sha'] ?? '';
-    $action = $job['action'] ?? '';
-
-    if ($repo === '' || $prNumber === 0 || $baseBranch === '') {
-        return 'invalid job: missing required fields';
-    }
-
     // Reject repo names that could traverse outside the checkout root
     if (!preg_match('#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $repo) || strpos($repo, '..') !== false) {
         return 'invalid job: bad repo name';
+    }
+
+    // Bot-skip applies to both PR and push jobs.
+    $isBot = ($job['is_bot'] ?? false) || str_ends_with($author, '[bot]');
+    if ($isBot && !$reviewBots) {
+        verbose_log("skipping bot job from {$author}", 1);
+        return 'skipped bot job';
+    }
+
+    if ($kind === 'push') {
+        return processPushJob($job, $repo, $jobId, $auditTypes, $options);
+    }
+
+    return processPrJob($job, $repo, $jobId, $auditTypes, $options);
+}
+
+/**
+ * Handle a PR review job (kind=pr). When options.commit is set the review is
+ * scoped to exactly that one commit (_base=SHA^, HEAD=SHA); otherwise the PR
+ * diff is applied and committed as a snapshot (HEAD=base+PR, _base=base). Either
+ * way results are posted to the PR.
+ *
+ * @param array<string, mixed> $job
+ * @param array<int, string> $auditTypes
+ * @param array<string, mixed> $options
+ */
+function processPrJob(array $job, string $repo, string $jobId, array $auditTypes, array $options): string
+{
+    global $checkoutRoot, $running, $onlyPrep;
+
+    $prNumber = (int)($job['pr_number'] ?? 0);
+    $baseBranch = $job['base_branch'] ?? '';
+    $sha = (string)($job['sha'] ?? '');
+
+    // Commit-scoped PR review: review just one commit but still post to the PR.
+    $commitSha = (isset($options['commit']) && is_string($options['commit'])) ? trim($options['commit']) : '';
+    $commitScoped = $commitSha !== '';
+
+    if ($prNumber === 0 || $baseBranch === '') {
+        return 'invalid job: missing required fields';
     }
 
     // Step 1: Checkout the base branch (target branch - where PR is merging into).
@@ -1075,93 +1129,57 @@ function processJob(array $job): string
         }
         initGitRepo($checkoutPath);
 
-        // Step 3: Get the PR diff, apply it, and commit it as a snapshot.
-        //
-        // After a successful apply the working tree holds the PR changes on top
-        // of the base commit. We record the base commit as the `_base` ref and
-        // commit the PR changes so that HEAD = base+PR with a clean tree. This
-        // gives the reviewer a real baseline ABOVE the PR: `git diff _base HEAD`
-        // shows the PR, and once opencode edits files in place, a plain
-        // `git diff` (working tree vs this snapshot) shows ONLY the agent's
-        // fixes — cleanly separated from the PR's own changes.
-        $snapshotCommitted = false;
-        $diff = getPRDiff($repo, $prNumber);
-        if ($diff !== null && $diff !== '') {
-            verbose_log("applying PR diff for {$repo}#{$prNumber}", 2);
-            $applyOk = applyPRDiff($checkoutPath, $diff);
-            if ($applyOk) {
-                if (commitPrSnapshot($checkoutPath, $prNumber)) {
-                    $snapshotCommitted = true;
-                    verbose_log("PR snapshot committed (HEAD=base+PR, _base=base)", 2);
+        // Step 3: Establish the review baseline so `git diff _base HEAD` is the
+        // change under review and a later plain `git diff` is only the agent's
+        // in-place fixes.
+        $baselineReady = false;
+        if ($commitScoped) {
+            // Review exactly one commit: _base = SHA^, HEAD = SHA.
+            verbose_log("commit-scoped PR review for {$repo}#{$prNumber} at commit {$commitSha}", 2);
+            $baseErr = setupCommitScopedBaseline($checkoutPath, $repo, $commitSha);
+            if ($baseErr !== 'true') {
+                verbose_log("commit-scoped baseline failed: {$baseErr}", 1);
+                return 'commit-scoped baseline failed: ' . $baseErr;
+            }
+            $baselineReady = true;
+            // Anchor inline comments on the reviewed commit.
+            $sha = $commitSha;
+        } else {
+            // Get the PR diff, apply it, and commit it as a snapshot. After a
+            // successful apply the working tree holds the PR changes on top of
+            // the base commit; we record the base commit as `_base` and commit
+            // the PR changes so HEAD = base+PR with a clean tree.
+            $diff = getPRDiff($repo, $prNumber);
+            if ($diff !== null && $diff !== '') {
+                verbose_log("applying PR diff for {$repo}#{$prNumber}", 2);
+                if (applyPRDiff($checkoutPath, $diff)) {
+                    if (commitPrSnapshot($checkoutPath, $prNumber)) {
+                        $baselineReady = true;
+                        verbose_log("PR snapshot committed (HEAD=base+PR, _base=base)", 2);
+                    } else {
+                        verbose_log("failed to commit PR snapshot - agent fixes cannot be captured", 1);
+                    }
                 } else {
-                    verbose_log("failed to commit PR snapshot - agent fixes cannot be captured", 1);
+                    verbose_log("failed to apply PR diff - analyzing base branch only", 2);
                 }
             } else {
-                verbose_log("failed to apply PR diff - analyzing base branch only", 2);
+                verbose_log("no diff retrieved - analyzing base branch only", 2);
             }
-        } else {
-            verbose_log("no diff retrieved - analyzing base branch only", 2);
         }
 
-        // --only-prep: checkout is ready with the PR diff applied. Print the
-        // opencode command to run by hand and stop here without running it.
+        // --only-prep: checkout is ready. Print the opencode command to run by
+        // hand and stop here without running it.
         if ($onlyPrep) {
-            return prepOnly($checkoutPath, $repo, $prNumber, (string)$jobId, $baseBranch);
+            return prepOnly($checkoutPath, $repo, $prNumber, $jobId, $baseBranch);
         }
 
-        verbose_log("starting opencode analysis for {$repo}#{$prNumber} in {$checkoutPath}" . ($opencodeTimeout > 0 ? " (timeout: " . ($opencodeTimeout >= 3600 ? round($opencodeTimeout/3600, 1)."h" : round($opencodeTimeout/60, 1)."m") . ")" : ""), 2);
-        $analysisOutput = runOpencodeAnalysis($checkoutPath, $jobId, $opencodeAnalyzeCmd, $showAgent, $opencodeTimeout);
-        verbose_log("analysis command completed", 3);
-
-        $issues = parseAnalysisOutput($analysisOutput, $showAllIssues);
-        verbose_log("found " . count($issues) . " issues", 2);
-
-        // At DEBUG level, log the actual JSON issues found
-        if (!empty($issues) && $verbose >= 2) {
-            foreach ($issues as $issue) {
-                $issueJson = json_encode($issue, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
-                verbose_log("analysis result: {$issueJson}", 2);
-            }
-        }
-
-        if (empty($issues)) {
-            return 'no_issues';
-        }
-
-        // Capture the agent's in-place fixes: a `git diff` of the working tree
-        // against the committed PR snapshot is ONLY the agent's edits. When no
-        // snapshot was committed (PR diff failed to apply, or the commit
-        // failed), there is nothing to diff against, so every issue is posted
-        // flag-only.
-        $fixDiff = '';
-        $fixedFiles = [];
-        if ($snapshotCommitted) {
-            ['diff' => $fixDiff, 'files' => $fixedFiles] = captureAgentFixes($checkoutPath);
-            verbose_log('agent modified ' . count($fixedFiles) . ' file(s): ' . ($fixedFiles !== [] ? implode(', ', $fixedFiles) : '(none)'), 2);
-            if ($fixDiff !== '' && $verbose >= 4) {
-                verbose_raw('agent_fix_diff', $fixDiff);
-            }
-        }
-
-        $issuesPosted = 0;
-        $issuesFixed = 0;
-
-        // Process each issue individually
-        foreach ($issues as $index => $issue) {
-            $file = $issue['file'] ?? $issue['path'] ?? 'unknown';
-            $line = $issue['line'] ?? $issue['line_number'] ?? 0;
-            $message = $issue['message'] ?? $issue['description'] ?? 'Issue';
-            verbose_log("processing issue #{$index}: file={$file} line={$line} message=" . substr($message, 0, 60), 3);
-
-            $issueResult = processIssue($issue, $checkoutPath, $githubToken, $repo, $prNumber, $sha, $fixedFiles);
-            if ($issueResult === true) {
-                $issuesFixed++;
-                verbose_log("posted comment for issue #{$index}", 3);
-            }
-            $issuesPosted++;
-        }
-
-        verbose_log("completed processing: {$issuesFixed}/{$issuesPosted} issue comment(s) posted for {$repo}#{$prNumber}", 2);
+        $postCtx = [
+            'kind' => 'pr',
+            'repo' => $repo,
+            'pr_number' => $prNumber,
+            'commit_sha' => $sha,
+        ];
+        return runReviewAndPost($checkoutPath, $jobId, $postCtx, $auditTypes, $options, $baselineReady);
     } finally {
         if ($onlyPrep) {
             // Leave the prepared checkout in place for manual testing (prepOnly
@@ -1181,8 +1199,159 @@ function processJob(array $job): string
             cleanupCheckout($checkoutPath);
         }
     }
+}
 
+/**
+ * Handle a push review job (kind=push). Clones the pushed branch, materializes
+ * the before..after commit range as `_base`..HEAD (the commits are already
+ * real, so no diff apply or snapshot commit), reviews it, and posts commit
+ * comments on the after SHA.
+ *
+ * @param array<string, mixed> $job
+ * @param array<int, string> $auditTypes
+ * @param array<string, mixed> $options
+ */
+function processPushJob(array $job, string $repo, string $jobId, array $auditTypes, array $options): string
+{
+    global $checkoutRoot, $running, $onlyPrep;
+
+    $ref = (string)($job['ref'] ?? '');
+    $beforeSha = (string)($job['before_sha'] ?? '');
+    $afterSha = (string)($job['after_sha'] ?? '');
+
+    if ($ref === '' || $afterSha === '') {
+        return 'invalid job: push missing ref or after_sha';
+    }
+
+    $checkoutPath = buildCheckoutPath($checkoutRoot, $repo, $ref);
+    verbose_log("starting push checkout: repo={$repo} ref={$ref} path={$checkoutPath}", 2);
+
+    $checkoutOk = checkoutBranch($repo, $ref, $checkoutPath);
+    if ($checkoutOk === 'shutdown') {
+        verbose_log("shutdown during push checkout, abandoning job", 2);
+        return 'shutdown';
+    }
+    if ($checkoutOk !== 'true') {
+        verbose_log("push checkout failed: {$checkoutOk}", 1);
+        return 'checkout failed: ' . $checkoutOk;
+    }
+    verbose_log("push checkout complete: {$ref} checked out", 2);
+
+    try {
+        if (!resetCheckoutToCleanState($checkoutPath, $ref)) {
+            return 'checkout reset failed';
+        }
+        initGitRepo($checkoutPath);
+
+        // Materialize the before..after range. The commits are real, so no diff
+        // apply / snapshot commit: _base = before (or after^ for a new branch),
+        // HEAD = after.
+        $baseErr = setupPushBaseline($checkoutPath, $repo, $beforeSha, $afterSha);
+        if ($baseErr !== 'true') {
+            verbose_log("push baseline failed: {$baseErr}", 1);
+            return 'push baseline failed: ' . $baseErr;
+        }
+
+        if ($onlyPrep) {
+            return prepOnlyPush($checkoutPath, $repo, $ref, $jobId, $beforeSha, $afterSha);
+        }
+
+        $postCtx = [
+            'kind' => 'push',
+            'repo' => $repo,
+            'pr_number' => 0,
+            'commit_sha' => $afterSha,
+        ];
+        return runReviewAndPost($checkoutPath, $jobId, $postCtx, $auditTypes, $options, true);
+    } finally {
+        if ($onlyPrep) {
+            invalidateCachedCheckout($repo, $ref);
+            verbose_log("--only-prep: leaving push checkout in place at {$checkoutPath}", 1);
+        } elseif (getCachedCheckoutPath($repo, $ref) === $checkoutPath) {
+            verbose_log("keeping cached checkout for reuse: {$checkoutPath}", 3);
+        } else {
+            verbose_log("cleaning up checkout: {$checkoutPath}", 3);
+            cleanupCheckout($checkoutPath);
+        }
+    }
+}
+
+/**
+ * Shared review+post stage used by every job kind. Assumes the checkout's
+ * baseline is already set (`git diff _base HEAD` is the change under review).
+ * Runs opencode once, parses issues, captures the agent's in-place fixes, and
+ * posts findings routed by $postCtx['kind'] and honoring $options.
+ *
+ * @param array{kind: string, repo: string, pr_number: int, commit_sha: string} $postCtx
+ * @param array<int, string> $auditTypes
+ * @param array<string, mixed> $options
+ * @param bool $baselineReady Whether a real _base/HEAD baseline exists (so agent
+ *                            fixes can be captured); false posts flag-only.
+ */
+function runReviewAndPost(string $checkoutPath, string $jobId, array $postCtx, array $auditTypes, array $options, bool $baselineReady): string
+{
+    global $githubToken, $opencodeAnalyzeCmd, $verbose, $showAgent, $showAllIssues, $opencodeTimeout;
+
+    $repo = (string)$postCtx['repo'];
+    $prNumber = (int)($postCtx['pr_number'] ?? 0);
+    $label = $prNumber > 0 ? "{$repo}#{$prNumber}" : $repo;
+
+    // Compose the prompt: full/all reviews everything, otherwise prepend a scope
+    // line restricting the review to the selected audit categories.
+    $promptText = composeReviewPrompt($auditTypes);
+
+    verbose_log("starting opencode analysis for {$label} in {$checkoutPath}" . ($opencodeTimeout > 0 ? " (timeout: " . ($opencodeTimeout >= 3600 ? round($opencodeTimeout / 3600, 1) . "h" : round($opencodeTimeout / 60, 1) . "m") . ")" : ""), 2);
+    $analysisOutput = runOpencodeAnalysis($checkoutPath, $jobId, $opencodeAnalyzeCmd, $showAgent, $opencodeTimeout, $promptText);
+    verbose_log("analysis command completed", 3);
+
+    $issues = parseAnalysisOutput($analysisOutput, $showAllIssues);
+    verbose_log("found " . count($issues) . " issues", 2);
+
+    // At DEBUG level, log the actual issues found
+    if (!empty($issues) && $verbose >= 2) {
+        foreach ($issues as $issue) {
+            $issueJson = json_encode($issue, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+            verbose_log("analysis result: {$issueJson}", 2);
+        }
+    }
+
+    if (empty($issues)) {
+        return 'no_issues';
+    }
+
+    // Capture the agent's in-place fixes: a `git diff` of the working tree
+    // against HEAD is ONLY the agent's edits. When no baseline exists there is
+    // nothing to diff against, so every issue is posted flag-only.
+    $fixDiff = '';
+    $fixedFiles = [];
+    if ($baselineReady) {
+        ['diff' => $fixDiff, 'files' => $fixedFiles] = captureAgentFixes($checkoutPath);
+        verbose_log('agent modified ' . count($fixedFiles) . ' file(s): ' . ($fixedFiles !== [] ? implode(', ', $fixedFiles) : '(none)'), 2);
+        if ($fixDiff !== '' && $verbose >= 4) {
+            verbose_raw('agent_fix_diff', $fixDiff);
+        }
+    }
+
+    $posted = postReviewFindings($issues, $checkoutPath, $githubToken, $postCtx, $options, $fixDiff, $fixedFiles);
+    verbose_log("completed processing: {$posted} comment(s) posted for {$label}", 2);
     return 'true';
+}
+
+/**
+ * --only-prep handler for push jobs. Prints the opencode command to run by hand
+ * for the prepared before..after checkout, then returns 'prep_only'.
+ */
+function prepOnlyPush(string $checkoutPath, string $repo, string $ref, string $jobId, string $beforeSha, string $afterSha): string
+{
+    ['cmd' => $opencodeCmd, 'promptFile' => $promptFile] = prepareOpencodeCommand($jobId);
+    $changed = trim((string)shell_exec('cd ' . escapeshellarg($checkoutPath) . ' && git diff --name-only _base HEAD 2>/dev/null'));
+    $range = ($beforeSha !== '' ? substr($beforeSha, 0, 7) : 'new') . '..' . substr($afterSha, 0, 7);
+    $label = "{$ref} ({$range})";
+
+    fwrite(STDOUT, buildPrepInstructions($checkoutPath, $repo, 0, $label, $promptFile, $opencodeCmd, $changed));
+
+    verbose_log("--only-prep: prepared push {$repo} {$ref} at {$checkoutPath}, exiting without running opencode", 1);
+    return 'prep_only';
 }
 
 /**
@@ -1230,22 +1399,111 @@ function buildPrepInstructions(string $checkoutPath, string $repo, int $prNumber
 }
 
 /**
- * Process a single issue: post a PR comment, including the agent's in-place fix
- * diff when one was captured for the issue's file.
+ * Route the review findings to comments, honoring the submit-CLI options.
+ *
+ * - post_branch / issue_for_commits: branch/issue/PR creation is NOT implemented;
+ *   warn and fall back to the default comment behavior (comments only).
+ * - combine: one summary comment listing every issue plus the combined fix diff.
+ * - split_changes: group the issues and post one summary comment per group.
+ * - default (post_diffs): one comment per issue with its own fix diff.
+ *
+ * Comments are routed by $postCtx['kind']: PR comments for pr jobs, commit
+ * comments for push jobs.
+ *
+ * @param array<int, array<string, mixed>> $issues
+ * @param array{kind: string, repo: string, pr_number: int, commit_sha: string} $postCtx
+ * @param array<string, mixed> $options
+ * @param string[] $fixedFiles
+ * @return int Number of comments successfully posted
+ */
+function postReviewFindings(array $issues, string $checkoutPath, string $token, array $postCtx, array $options, string $fixDiff, array $fixedFiles): int
+{
+    // Branch/issue/PR creation is not implemented — warn and fall back to comments.
+    $unimplemented = [];
+    if (!empty($options['post_branch'])) {
+        $unimplemented[] = 'post_branch';
+    }
+    if (!empty($options['issue_for_commits'])) {
+        $unimplemented[] = 'issue_for_commits';
+    }
+    if ($unimplemented !== []) {
+        verbose_log('option(s) ' . implode('/', $unimplemented) . ' requested but branch/issue/PR creation is not yet implemented; falling back to default comment behavior', 1);
+    }
+
+    $combine = !empty($options['combine']);
+    $split = !empty($options['split_changes']);
+
+    // combine: one summary comment with the combined fix diff.
+    if ($combine && !$split) {
+        $body = buildCombinedComment($issues, $fixDiff);
+        verbose_log('combine: posting one summary comment for ' . count($issues) . ' issue(s)', 2);
+        return postSummaryComment($token, $postCtx, $body) ? 1 : 0;
+    }
+
+    // split_changes: one summary comment per group.
+    if ($split) {
+        $splitBy = (is_string($options['split_by'] ?? null) && $options['split_by'] !== '') ? $options['split_by'] : 'file';
+        $batchSize = (int)($options['split_batch_size'] ?? 10);
+        $splitLabel = is_string($options['split_label'] ?? null) ? $options['split_label'] : '';
+        $groups = groupIssuesForSplit($issues, $splitBy, $batchSize);
+        $total = count($groups);
+        verbose_log("split_changes: posting {$total} group comment(s) (by {$splitBy}, batch {$batchSize})", 2);
+        $posted = 0;
+        foreach ($groups as $i => $group) {
+            $body = buildGroupComment($group, $splitBy, (int)$i + 1, $total, $splitLabel);
+            if (postSummaryComment($token, $postCtx, $body)) {
+                $posted++;
+            }
+        }
+        return $posted;
+    }
+
+    // Default (post_diffs): one comment per issue.
+    $posted = 0;
+    foreach ($issues as $index => $issue) {
+        $file = $issue['file'] ?? $issue['path'] ?? 'unknown';
+        $line = $issue['line'] ?? $issue['line_number'] ?? 0;
+        $message = $issue['message'] ?? $issue['description'] ?? 'Issue';
+        verbose_log("processing issue #{$index}: file={$file} line={$line} message=" . substr((string)$message, 0, 60), 3);
+        if (processIssue($issue, $checkoutPath, $token, $postCtx, $fixedFiles)) {
+            $posted++;
+            verbose_log("posted comment for issue #{$index}", 3);
+        }
+    }
+    return $posted;
+}
+
+/**
+ * Post a single summary/group comment routed by job kind: a PR comment for pr
+ * jobs, a commit comment for push jobs.
+ *
+ * @param array{kind: string, repo: string, pr_number: int, commit_sha: string} $postCtx
+ */
+function postSummaryComment(string $token, array $postCtx, string $body): bool
+{
+    if (($postCtx['kind'] ?? 'pr') === 'push') {
+        return postCommitComment($token, (string)$postCtx['repo'], (string)$postCtx['commit_sha'], $body) === 'true';
+    }
+    return postPrComment($token, (string)$postCtx['repo'], (int)$postCtx['pr_number'], $body) === 'true';
+}
+
+/**
+ * Process a single issue: post a comment, including the agent's in-place fix
+ * diff when one was captured for the issue's file. The comment is routed by
+ * $postCtx['kind'] — a PR review/issue comment for pr jobs, a commit comment
+ * for push jobs.
  *
  * The proposed fix comes from the git working tree (opencode edited files in
  * place during the single review run), NOT from a second opencode pass.
  *
- * @param array $issue Issue from opencode analysis
+ * @param array<string, mixed> $issue Issue from opencode analysis
  * @param string $checkoutPath Local checkout path
  * @param string $token GitHub token
- * @param string $repo Repo name
- * @param int $prNumber PR number
- * @param string $sha Commit SHA
+ * @param array{kind: string, repo: string, pr_number: int, commit_sha: string} $postCtx
  * @param string[] $fixedFiles Files the agent edited (from `git diff --name-only`)
  * @return bool True if the comment was posted, false otherwise
  */
-function processIssue(array $issue, string $checkoutPath, string $token, string $repo, int $prNumber, string $sha, array $fixedFiles): bool
+function processIssue(array $issue, string $checkoutPath, string $token, array $postCtx, array $fixedFiles): bool
 {
     $file = $issue['file'] ?? $issue['path'] ?? '';
     $line = (int)($issue['line'] ?? $issue['line_number'] ?? 0);
@@ -1254,6 +1512,11 @@ function processIssue(array $issue, string $checkoutPath, string $token, string 
         verbose_log("skipping issue: no file specified", 2);
         return false;
     }
+
+    $kind = (string)($postCtx['kind'] ?? 'pr');
+    $repo = (string)$postCtx['repo'];
+    $prNumber = (int)($postCtx['pr_number'] ?? 0);
+    $commitSha = (string)($postCtx['commit_sha'] ?? '');
 
     // A proposed fix is available only when the agent edited this issue's file.
     $diff = null;
@@ -1269,13 +1532,23 @@ function processIssue(array $issue, string $checkoutPath, string $token, string 
 
     $commentBody = buildIssueComment($issue, $diff, $repo, $prNumber, $hasFix);
 
-    if ($hasFix) {
-        verbose_log("posting review comment with agent fix for {$file}:{$line}", 2);
-        // Post as a review comment (with line reference if possible)
-        $postResult = postPrReviewComment($token, $repo, $prNumber, $commentBody, $sha, $file, $line);
+    if ($kind === 'push') {
+        if ($hasFix) {
+            verbose_log("posting commit comment with agent fix for {$file}:{$line}", 2);
+            $postResult = postCommitComment($token, $repo, $commitSha, $commentBody, $file, $line);
+        } else {
+            verbose_log("no agent fix for {$file}:{$line}, posting flag-only commit comment", 2);
+            $postResult = postCommitComment($token, $repo, $commitSha, $commentBody);
+        }
     } else {
-        verbose_log("no agent fix for {$file}:{$line}, posting flag-only comment", 2);
-        $postResult = postPrComment($token, $repo, $prNumber, $commentBody);
+        if ($hasFix) {
+            verbose_log("posting review comment with agent fix for {$file}:{$line}", 2);
+            // Post as a review comment (with line reference if possible)
+            $postResult = postPrReviewComment($token, $repo, $prNumber, $commentBody, $commitSha, $file, $line);
+        } else {
+            verbose_log("no agent fix for {$file}:{$line}, posting flag-only comment", 2);
+            $postResult = postPrComment($token, $repo, $prNumber, $commentBody);
+        }
     }
 
     if ($postResult === 'true') {
@@ -1340,6 +1613,140 @@ function buildIssueComment(array $issue, ?string $diff, string $repo, int $prNum
 }
 
 /**
+ * Map a severity label to a display emoji (shared by summary/group bodies).
+ */
+function reviewSeverityEmoji(string $severity): string
+{
+    $map = [
+        'critical' => '🔴',
+        'error' => '🔴',
+        'blocker' => '🔴',
+        'major' => '🟠',
+        'minor' => '🟡',
+        'warning' => '🟡',
+        'warn' => '🟡',
+        'info' => '🔵',
+        'note' => '🔵',
+        'nitpick' => '🟢',
+        'hint' => '💡',
+    ];
+    return $map[strtolower($severity)] ?? '⚠️';
+}
+
+/**
+ * Render one issue as a single markdown bullet line (pure).
+ *
+ * @param array<string, mixed> $issue
+ */
+function renderIssueBullet(array $issue): string
+{
+    $file = $issue['file'] ?? $issue['path'] ?? 'unknown';
+    $line = $issue['line'] ?? $issue['line_number'] ?? '-';
+    $message = $issue['message'] ?? $issue['description'] ?? 'Issue';
+    $severity = (string)($issue['severity'] ?? $issue['level'] ?? 'warning');
+    $emoji = reviewSeverityEmoji($severity);
+    $loc = "`{$file}`" . (($line !== '-' && (int)$line !== 0) ? ":{$line}" : '');
+    return "- {$emoji} **{$severity}** {$loc} — {$message}";
+}
+
+/**
+ * Build ONE combined summary comment listing every issue plus the combined
+ * agent fix diff (pure — no network/git). Used by the --combine option.
+ *
+ * @param array<int, array<string, mixed>> $issues
+ */
+function buildCombinedComment(array $issues, string $combinedDiff): string
+{
+    $count = count($issues);
+    $body = "## Code Review Summary — {$count} issue" . ($count === 1 ? '' : 's') . "\n\n";
+    foreach ($issues as $issue) {
+        $body .= renderIssueBullet($issue) . "\n";
+    }
+    if (trim($combinedDiff) !== '') {
+        $body .= "\n### Proposed Fixes\n\n```diff\n" . $combinedDiff;
+        if (substr($combinedDiff, -1) !== "\n") {
+            $body .= "\n";
+        }
+        $body .= "```\n";
+    }
+    $body .= "\n*Automated review by Code Review Bot*\n";
+    return $body;
+}
+
+/**
+ * Build ONE summary comment for a split group (pure — no network/git). Used by
+ * the --split-changes option; posts grouped comments only (no branch/issue/PR).
+ *
+ * @param array<int, array<string, mixed>> $group
+ */
+function buildGroupComment(array $group, string $splitBy, int $index, int $total, string $splitLabel = ''): string
+{
+    $labelPart = $splitLabel !== '' ? " [{$splitLabel}]" : '';
+    $count = count($group);
+    $body = "## Code Review — group {$index}/{$total} (by {$splitBy}){$labelPart}\n\n";
+    $body .= "{$count} issue" . ($count === 1 ? '' : 's') . " in this group:\n\n";
+    foreach ($group as $issue) {
+        $body .= renderIssueBullet($issue) . "\n";
+    }
+    $body .= "\n*Automated review by Code Review Bot*\n";
+    return $body;
+}
+
+/**
+ * Group parsed issues for the --split-changes option (pure — no network/git).
+ *
+ * Issues are first bucketed by strategy, then each bucket is chunked into
+ * batches of at most $batchSize. The 'size' strategy skips bucketing and
+ * chunks the whole list into fixed-size batches.
+ *
+ *   file     — bucket by issue file/path (default)
+ *   audit    — bucket by audit/category (falls back to severity)
+ *   severity — bucket by severity
+ *   size     — no bucketing; fixed-size batches only
+ *
+ * @param array<int, array<string, mixed>> $issues
+ * @return array<int, array<int, array<string, mixed>>> List of groups
+ */
+function groupIssuesForSplit(array $issues, string $splitBy = 'file', int $batchSize = 10): array
+{
+    $batchSize = $batchSize > 0 ? $batchSize : 10;
+    $splitBy = in_array($splitBy, ['file', 'audit', 'severity', 'size'], true) ? $splitBy : 'file';
+
+    if ($issues === []) {
+        return [];
+    }
+
+    if ($splitBy === 'size') {
+        return array_chunk($issues, $batchSize);
+    }
+
+    $buckets = [];
+    foreach ($issues as $issue) {
+        switch ($splitBy) {
+            case 'severity':
+                $key = (string)($issue['severity'] ?? $issue['level'] ?? 'unknown');
+                break;
+            case 'audit':
+                $key = (string)($issue['audit'] ?? $issue['category'] ?? $issue['severity'] ?? 'general');
+                break;
+            case 'file':
+            default:
+                $key = (string)($issue['file'] ?? $issue['path'] ?? 'unknown');
+                break;
+        }
+        $buckets[$key][] = $issue;
+    }
+
+    $groups = [];
+    foreach ($buckets as $bucket) {
+        foreach (array_chunk($bucket, $batchSize) as $chunk) {
+            $groups[] = $chunk;
+        }
+    }
+    return $groups;
+}
+
+/**
  * Commit the applied PR diff as a snapshot on top of the base commit.
  *
  * Before this runs, HEAD is at the base commit and the working tree holds the
@@ -1395,6 +1802,166 @@ function getAgentFileDiff(string $checkoutPath, string $file): string
     return (string)shell_exec(
         'cd ' . escapeshellarg($checkoutPath) . ' && git diff -- ' . escapeshellarg($file) . ' 2>/dev/null'
     );
+}
+
+/**
+ * True if a commit object is present in the local checkout.
+ */
+function gitCommitExists(string $checkoutPath, string $commit): bool
+{
+    if ($commit === '') {
+        return false;
+    }
+    $output = [];
+    $ret = 0;
+    exec(
+        'cd ' . escapeshellarg($checkoutPath) . ' && git rev-parse --verify -q '
+            . escapeshellarg($commit . '^{commit}') . ' >/dev/null 2>&1',
+        $output,
+        $ret
+    );
+    return $ret === 0;
+}
+
+/**
+ * Fetch a specific commit object into a (shallow) checkout. GitHub allows
+ * fetching reachable SHAs directly; if that fails, deepen the shallow history
+ * as a fallback. Returns true once the commit is present locally.
+ */
+function fetchCommitObject(string $checkoutPath, string $repo, string $commit, int $depth = 1): bool
+{
+    if ($commit === '') {
+        return false;
+    }
+    $depth = max(1, $depth);
+    $remoteUrl = "git@github.com:{$repo}.git";
+
+    // Prefer fetching the exact SHA (works for commits reachable from a ref).
+    $cmd = sprintf(
+        'cd %s && git fetch --depth %d %s %s 2>&1',
+        escapeshellarg($checkoutPath),
+        $depth,
+        escapeshellarg($remoteUrl),
+        escapeshellarg($commit)
+    );
+    $output = [];
+    $ret = 0;
+    exec($cmd, $output, $ret);
+    if (gitCommitExists($checkoutPath, $commit)) {
+        return true;
+    }
+    verbose_log('fetchCommitObject: direct fetch of ' . substr($commit, 0, 12) . ' failed, deepening', 3);
+
+    // Fallback: deepen the existing origin history and re-check.
+    $cmd2 = sprintf(
+        'cd %s && git fetch --deepen 50 origin 2>&1',
+        escapeshellarg($checkoutPath)
+    );
+    $out2 = [];
+    $ret2 = 0;
+    exec($cmd2, $out2, $ret2);
+    return gitCommitExists($checkoutPath, $commit);
+}
+
+/**
+ * Ensure a commit is available locally, fetching it if the shallow clone lacks
+ * it. Returns false when the commit cannot be obtained.
+ */
+function ensureCommitPresent(string $checkoutPath, string $repo, string $commit, int $depth = 1): bool
+{
+    if (gitCommitExists($checkoutPath, $commit)) {
+        return true;
+    }
+    return fetchCommitObject($checkoutPath, $repo, $commit, $depth);
+}
+
+/**
+ * Materialize a before..after commit range as `_base`..HEAD so the standard
+ * review flow applies: `git diff _base HEAD` is exactly the change under review
+ * and a later plain `git diff` is exactly the agent's in-place fixes.
+ *
+ * $baseSha empty means "use $headSha^" (brand-new branch or single commit). When
+ * $headSha is a root commit with no parent, the well-known empty tree is used as
+ * the baseline so the whole commit reads as additions.
+ *
+ * The checkout is a shallow clone, so both commits are fetched/deepened as
+ * needed. Returns 'true' on success or an error message string.
+ */
+function setupCommitRangeBaseline(string $checkoutPath, string $repo, string $baseSha, string $headSha): string
+{
+    if ($headSha === '') {
+        return 'missing head sha';
+    }
+    // depth 2 brings the head commit and (usually) its parent.
+    if (!ensureCommitPresent($checkoutPath, $repo, $headSha, 2)) {
+        return "head commit {$headSha} not available";
+    }
+
+    if ($baseSha !== '') {
+        if (!ensureCommitPresent($checkoutPath, $repo, $baseSha, 1)) {
+            return "base commit {$baseSha} not available";
+        }
+        $baseRef = $baseSha;
+    } else {
+        // Baseline is head^. Fetch a bit deeper if the parent is missing.
+        $parent = trim((string)shell_exec(
+            'cd ' . escapeshellarg($checkoutPath) . ' && git rev-parse --verify -q '
+                . escapeshellarg($headSha . '^') . ' 2>/dev/null'
+        ));
+        if ($parent === '') {
+            fetchCommitObject($checkoutPath, $repo, $headSha, 2);
+            $parent = trim((string)shell_exec(
+                'cd ' . escapeshellarg($checkoutPath) . ' && git rev-parse --verify -q '
+                    . escapeshellarg($headSha . '^') . ' 2>/dev/null'
+            ));
+        }
+        if ($parent === '') {
+            // Root commit: diff against the empty tree, materialized as a commit
+            // so `_base` can be a normal ref.
+            $baseRef = trim((string)shell_exec(
+                'cd ' . escapeshellarg($checkoutPath) . ' && git commit-tree ' . EMPTY_TREE_SHA . ' -m base 2>/dev/null'
+            ));
+            if ($baseRef === '') {
+                return "cannot resolve baseline for root commit {$headSha}";
+            }
+        } else {
+            $baseRef = $parent;
+        }
+    }
+
+    // Point `_base` at the baseline and check out the head commit as HEAD.
+    $cmd = sprintf(
+        'cd %s && git branch -f _base %s 2>&1 && git checkout -f %s 2>&1',
+        escapeshellarg($checkoutPath),
+        escapeshellarg($baseRef),
+        escapeshellarg($headSha)
+    );
+    $output = [];
+    $ret = 0;
+    exec($cmd, $output, $ret);
+    if ($ret !== 0) {
+        return 'git baseline setup failed: ' . substr(implode("\n", $output), 0, 200);
+    }
+    verbose_log("setupCommitRangeBaseline: _base={$baseRef} HEAD={$headSha} in {$checkoutPath}", 3);
+    return 'true';
+}
+
+/**
+ * Push baseline: _base = before_sha (or after_sha^ when before is empty, i.e. a
+ * brand-new branch), HEAD = after_sha. Returns 'true' or an error string.
+ */
+function setupPushBaseline(string $checkoutPath, string $repo, string $beforeSha, string $afterSha): string
+{
+    return setupCommitRangeBaseline($checkoutPath, $repo, $beforeSha, $afterSha);
+}
+
+/**
+ * Commit-scoped baseline: review exactly one commit — _base = SHA^, HEAD = SHA.
+ * Returns 'true' or an error string.
+ */
+function setupCommitScopedBaseline(string $checkoutPath, string $repo, string $sha): string
+{
+    return setupCommitRangeBaseline($checkoutPath, $repo, '', $sha);
 }
 
 /**
@@ -1850,6 +2417,47 @@ function getReviewPrompt(): string
 }
 
 /**
+ * Compose the final review prompt for a set of audit types.
+ *
+ * The review.txt file itself stays generic (source-agnostic, all-categories).
+ * When the job selects a subset of audit categories, prepend a scope line
+ * naming ONLY those categories so opencode limits its review accordingly.
+ * 'full'/'all' (or an unrecognized/empty selection) reviews everything.
+ *
+ * Pure: pass $basePrompt to test without touching the prompt file.
+ *
+ * @param array<int, mixed> $auditTypes
+ */
+function composeReviewPrompt(array $auditTypes, ?string $basePrompt = null): string
+{
+    $base = $basePrompt ?? getReviewPrompt();
+
+    $valid = ['security', 'performance', 'documentation', 'logic', 'style'];
+    $selected = [];
+    foreach ($auditTypes as $type) {
+        if (!is_string($type)) {
+            continue;
+        }
+        $type = strtolower(trim($type));
+        if ($type === 'full' || $type === 'all') {
+            return $base; // everything — no scope restriction
+        }
+        if (in_array($type, $valid, true) && !in_array($type, $selected, true)) {
+            $selected[] = $type;
+        }
+    }
+
+    if ($selected === []) {
+        return $base; // nothing recognized — review everything
+    }
+
+    $scope = 'REVIEW SCOPE: Limit this review to the following categories ONLY: '
+        . implode(', ', $selected) . '. Ignore issues that fall outside these categories.'
+        . "\n\n";
+    return $scope . $base;
+}
+
+/**
  * Write the review prompt to a temp file and return the exact opencode command
  * the worker runs plus that file's path. Shared by the live analysis path and
  * --only-prep so the printed command is byte-for-byte what would run.
@@ -1862,21 +2470,24 @@ function getReviewPrompt(): string
  * {"type":"subagent",...} NDJSON events so sub-agent progress interleaves
  * cleanly instead of corrupting the stream.
  *
+ * When $promptText is null the generic review prompt is used; callers pass a
+ * composed prompt (e.g. with an audit-type scope prefix) to narrow the review.
+ *
  * @return array{cmd: string, promptFile: string}
  */
-function prepareOpencodeCommand(string $jobId): array
+function prepareOpencodeCommand(string $jobId, ?string $promptText = null): array
 {
     $promptFile = '/tmp/opencode-prompt-' . $jobId . '.txt';
-    file_put_contents($promptFile, getReviewPrompt());
+    file_put_contents($promptFile, $promptText ?? getReviewPrompt());
     $cmd = sprintf('opencode run "$(cat %s)" --format json', escapeshellarg($promptFile));
     return ['cmd' => $cmd, 'promptFile' => $promptFile];
 }
 
-function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bool $showAgent = false, int $timeout = 1800): string
+function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bool $showAgent = false, int $timeout = 1800, ?string $promptText = null): string
 {
     global $running, $verbose, $logFile;
 
-    ['cmd' => $opencodeCmd, 'promptFile' => $promptFile] = prepareOpencodeCommand($jobId);
+    ['cmd' => $opencodeCmd, 'promptFile' => $promptFile] = prepareOpencodeCommand($jobId, $promptText);
 
     // Log what changed — kept OUT of the analyzed command output so diff
     // content can never be mistaken for review findings by the parsers
@@ -2298,6 +2909,93 @@ function postPrReviewComment(string $token, string $repo, int $prNumber, string 
 }
 
 /**
+ * POST a JSON body to the GitHub API and return the raw disposition.
+ *
+ * @param array<string, mixed> $data
+ * @return array{httpCode: int, response: string, error: string}
+ */
+function ghApiPost(string $url, string $token, array $data): array
+{
+    $json = json_encode($data, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $ch = curl_init();
+    curl_setopt_array($ch, [
+        CURLOPT_URL => $url,
+        CURLOPT_RETURNTRANSFER => true,
+        CURLOPT_TIMEOUT => 30,
+        CURLOPT_CONNECTTIMEOUT => 10,
+        CURLOPT_POST => true,
+        CURLOPT_POSTFIELDS => $json !== false ? $json : '',
+        CURLOPT_HTTPHEADER => [
+            'Authorization: token ' . $token,
+            'Content-Type: application/json',
+            'Accept: application/vnd.github.v3+json',
+            'User-Agent: webhooks.interserver.net-code-review',
+        ],
+    ]);
+    $response = curl_exec($ch);
+    $httpCode = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
+    $error = curl_error($ch);
+    curl_close($ch);
+
+    return [
+        'httpCode' => $httpCode,
+        'response' => is_string($response) ? $response : '',
+        'error' => $error,
+    ];
+}
+
+/**
+ * Post a comment on a commit (push jobs). When $path and $line are given an
+ * inline commit comment is attempted; if GitHub rejects the anchor (the line is
+ * not in the commit's diff), it falls back to a plain commit-level comment so
+ * the finding is never lost.
+ *
+ * @return string 'true' on success, error message on failure
+ */
+function postCommitComment(string $token, string $repo, string $sha, string $body, string $path = '', int $line = 0): string
+{
+    if ($sha === '') {
+        return 'commit comment error: missing commit sha';
+    }
+    $parts = explode('/', $repo, 2);
+    if (count($parts) !== 2 || $parts[0] === '' || $parts[1] === '') {
+        return 'commit comment error: bad repo name';
+    }
+    [$owner, $repoName] = $parts;
+    $url = "https://api.github.com/repos/{$owner}/{$repoName}/commits/{$sha}/comments";
+
+    $inline = $path !== '' && $line > 0;
+    $data = ['body' => $body];
+    if ($inline) {
+        // `path` + `position` anchor the comment inline within the commit's diff.
+        // `position` is the line index in the file's diff; we best-effort it with
+        // the file line and fall back to a plain comment if GitHub rejects it.
+        $data['path'] = $path;
+        $data['position'] = $line;
+    }
+
+    $result = ghApiPost($url, $token, $data);
+    if ($result['error'] !== '') {
+        return 'curl error: ' . $result['error'];
+    }
+
+    // Inline anchor rejected (line not in the commit's diff) — retry plain.
+    if ($inline && $result['httpCode'] >= 400 && $result['httpCode'] < 500) {
+        verbose_log("postCommitComment: inline anchor rejected (HTTP {$result['httpCode']}) for {$path}:{$line}, posting plain commit comment", 2);
+        $result = ghApiPost($url, $token, ['body' => $body]);
+        if ($result['error'] !== '') {
+            return 'curl error: ' . $result['error'];
+        }
+    }
+
+    if ($result['httpCode'] < 200 || $result['httpCode'] >= 300) {
+        return "GitHub API returned HTTP {$result['httpCode']}: {$result['response']}";
+    }
+
+    return 'true';
+}
+
+/**
  * Handle a failed job
  */
 function handleFailure(array $job, string $reason): void
@@ -2312,12 +3010,15 @@ function handleFailure(array $job, string $reason): void
     // Generate new UUID for requeued job to avoid deduplication issues
     $job['id'] = CodeReviewQueue::uuidV4();
 
-    // Before requeueing, verify base_branch is correct to avoid repeated fallback lookups
-    $storedBase = $job['base_branch'] ?? '';
-    $correctBase = getPRRef($job['repo'] ?? '', (int)($job['pr_number'] ?? 0), 'base');
-    if ($correctBase !== null && $correctBase !== $storedBase) {
-        verbose_log("correcting base_branch from '{$storedBase}' to '{$correctBase}' before requeue", 2);
-        $job['base_branch'] = $correctBase;
+    // Before requeueing a PR job, verify base_branch is correct to avoid
+    // repeated fallback lookups. Push jobs have no PR/base_branch to correct.
+    if (CodeReviewQueue::jobKind($job) === 'pr') {
+        $storedBase = $job['base_branch'] ?? '';
+        $correctBase = getPRRef($job['repo'] ?? '', (int)($job['pr_number'] ?? 0), 'base');
+        if ($correctBase !== null && $correctBase !== $storedBase) {
+            verbose_log("correcting base_branch from '{$storedBase}' to '{$correctBase}' before requeue", 2);
+            $job['base_branch'] = $correctBase;
+        }
     }
 
     error_log("github-code-review: requeueing job {$job['id']} (retry {$retryCount}/" . MAX_RETRIES . "): {$reason}");

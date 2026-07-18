@@ -226,6 +226,39 @@ try {
         ]);
     }
 
+    // Enqueue push events for code review — mirrors the pull_request block but
+    // carries a before..after commit range instead of a PR number.
+    if ($EventType === 'push') {
+        $deleted = ($Payload['deleted'] ?? false) === true;
+        $commits = $Payload['commits'] ?? [];
+        $refFull = (string)($Payload['ref'] ?? '');
+        // Only review branch pushes; strip refs/heads/. Tag pushes (refs/tags/)
+        // and other refs are left to fall through with an empty branch below.
+        $pushBranch = strncmp($refFull, 'refs/heads/', 11) === 0 ? substr($refFull, 11) : '';
+        $beforeSha = (string)($Payload['before'] ?? '');
+        $afterSha = (string)($Payload['after'] ?? '');
+        $pusher = $Payload['pusher'] ?? [];
+        $sender = $Payload['sender'] ?? [];
+        $pushAuthor = (string)($pusher['name'] ?? ($sender['login'] ?? ''));
+        $pushIsBot = str_ends_with($pushAuthor, '[bot]');
+        // An all-zeros before means a brand-new branch: signal that by leaving
+        // before_sha empty so the worker falls back to after^ as the baseline.
+        $newBranch = $beforeSha === '' || preg_match('/^0+$/', $beforeSha) === 1;
+
+        // Skip branch-delete pushes and pushes that carry no commits.
+        if (!$deleted && $pushBranch !== '' && $afterSha !== '' && !empty($commits)) {
+            CodeReviewQueue::enqueuePush([
+                'repo' => $RepositoryName,
+                'ref' => $pushBranch,
+                'before_sha' => $newBranch ? '' : $beforeSha,
+                'after_sha' => $afterSha,
+                'author' => $pushAuthor,
+                'author_url' => $sender['html_url'] ?? ($pushAuthor !== '' ? 'https://github.com/' . $pushAuthor : ''),
+                'is_bot' => $pushIsBot,
+            ]);
+        }
+    }
+
     $disposition = NotificationQueue::getLastStatus();
     $previewText = $text !== '' ? mb_substr(preg_replace('/\s+/u', ' ', $text), 0, 100) : '<no-text>';
     error_log(sprintf(
@@ -262,7 +295,7 @@ function pickRoom(string $repo): string
 function buildDedupKey(string $eventType, string $repo, array $payload): string
 {
     // Helper to extract short SHA from payload
-    $getSha = function(array $payload, string $shaKey): string {
+    $getSha = function (array $payload, string $shaKey): string {
         $sha = (string)($payload[$shaKey] ?? '');
         return $sha !== '' ? substr($sha, 0, 7) : '';
     };

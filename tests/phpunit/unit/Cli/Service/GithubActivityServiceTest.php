@@ -43,7 +43,6 @@ class GithubActivityServiceTest extends TestCase
         if ($user === null) {
             // gh not authenticated - this is valid behavior
             $this->markTestSkipped('gh is available but not authenticated');
-            return;
         }
 
         // If authenticated, validate the response structure
