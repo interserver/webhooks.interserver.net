@@ -17,7 +17,13 @@ problems elsewhere in the repository.
 
 ## How to fix
 
-For each real issue in the changed lines, edit the file in place to fix it:
+For each real issue in the changed lines, edit the file in place to fix it.
+
+**Default to FIXING.** A fix that is small, safe, and unambiguous — a typo, a
+misspelled string literal or constant (e.g. `'pendapprova'` should be
+`'pendapproval'`), an obviously wrong value, a missing null check on a changed
+line — MUST be fixed in place, never merely flagged. Only fall back to
+FLAGGED-only when a fix genuinely needs human judgment.
 
 - Make MINIMAL, SURGICAL changes. Touch only what is needed to fix the specific
   issue, scoped to the lines the change added or modified.
@@ -30,9 +36,10 @@ For each real issue in the changed lines, edit the file in place to fix it:
   `git add`, `git reset`, `git stash`, `git checkout`, or any other command that
   stages, commits, or discards changes. The worker captures your edits with a
   plain `git diff` afterwards.
-- If you cannot fix an issue safely with a small in-place change (for example it
-  would require an API change, a new dependency, or broad restructuring), leave
-  the code as-is and only FLAG it.
+- Only FLAG instead of fixing when the fix genuinely needs human judgment — it
+  would require an API or signature change, a new dependency, broad
+  restructuring, or you are not confident the change is correct. Do NOT flag a
+  trivial, unambiguous fix; make it.
 
 ## Confidence
 

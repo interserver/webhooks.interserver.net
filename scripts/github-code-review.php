@@ -9,8 +9,11 @@ declare(strict_types=1);
  * with `_base` and HEAD set so that `git diff _base HEAD` is exactly the change
  * under review and a later plain `git diff` is exactly the agent's in-place fixes:
  *
- *   - kind=pr (no options.commit): clone the PR base branch, apply the PR diff,
- *     and commit it as a snapshot (HEAD = base+PR, _base = base commit).
+ *   - kind=pr (no options.commit): clone the PR base branch and pin the review to
+ *     the PR head commit — _base = GitHub's 3-dot merge-base, HEAD = head SHA — so
+ *     a later synchronize push or a moving base branch cannot shift the tree under
+ *     review. Falls back to applying the live PR diff as a snapshot (HEAD =
+ *     base+PR, _base = base commit) only when the head SHA cannot be pinned.
  *   - kind=pr WITH options.commit=SHA: review just that one commit
  *     (_base = SHA^, HEAD = SHA); results still post to the PR.
  *   - kind=push: review a before..after commit range with no PR; the commits
@@ -697,6 +700,46 @@ function getPRBaseBranch(string $repo, int $prNumber): ?string
 }
 
 /**
+ * Resolve the head commit SHA to review for a PR job. Prefers a non-empty
+ * $job['sha'] (the pr.head.sha captured at enqueue time) so no network call is
+ * needed in the common case; otherwise it looks the SHA up from the GitHub API.
+ * Returns '' when the SHA cannot be resolved (the caller then falls back to the
+ * live diff-apply path).
+ *
+ * @param array<string, mixed> $job
+ */
+function resolvePrHeadSha(array $job, string $repo, int $prNumber): string
+{
+    $sha = trim((string)($job['sha'] ?? ''));
+    if ($sha !== '') {
+        return $sha;
+    }
+
+    // No SHA on the job envelope — look it up. Skip the API entirely when we
+    // have nothing to query with (keeps callers/tests network-free).
+    if ($repo === '' || $prNumber <= 0) {
+        return '';
+    }
+
+    $cmd = sprintf(
+        'gh api %s --jq .head.sha 2>&1',
+        escapeshellarg("repos/{$repo}/pulls/{$prNumber}")
+    );
+    $output = [];
+    $ret = 0;
+    exec($cmd, $output, $ret);
+    verbose_raw('gh_api_pr_head_sha', "cmd: {$cmd}\noutput: " . implode("\n", $output) . "\nret: {$ret}");
+    if ($ret === 0 && !empty($output)) {
+        $resolved = trim(implode("\n", $output));
+        // Guard against error text / non-SHA output leaking through 2>&1.
+        if (preg_match('/^[0-9a-f]{7,40}$/i', $resolved) === 1) {
+            return $resolved;
+        }
+    }
+    return '';
+}
+
+/**
  * Get the diff for a PR using gh pr diff
  *
  * @param string $repo Owner/repo format
@@ -820,7 +863,10 @@ const MAX_RETRIES = 3;
 // root commit that has no parent (brand-new branch's very first commit).
 const EMPTY_TREE_SHA = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 
-$githubToken = getenv(GITHUB_TOKEN) ?: '';
+// Comment posting uses raw curl with an explicit token (reads go through the
+// gh CLI's own auth). Honor GITHUB_TOKEN, then GH_TOKEN, then (in the direct-run
+// block below) fall back to whatever `gh` is authenticated with.
+$githubToken = getenv(GITHUB_TOKEN) ?: (getenv('GH_TOKEN') ?: '');
 $ghToken = getenv('GH_TOKEN') ?: '';
 $checkoutRoot = getenv(CHECKOUT_ROOT) ?: '/tmp/pr-checkouts';
 $opencodeAnalyzeCmd = getenv(OPENCODE_ANALYZE_CMD) ?: 'sh -c "cd {dir} && opencode run \"Analyze all PHP files in this directory tree. Find issues and return JSON array with fields: file, line, severity (error/warning/info), message for each issue\" --format json" 2>&1';
@@ -831,6 +877,16 @@ if ($__directRun) {
     if (strpos($authStatus, 'authenticated') === false && strpos($authStatus, 'Logged in') === false) {
         error_log('github-code-review: Not logged into gh. Run "gh auth login" first.');
         exit(1);
+    }
+
+    // No token was exported, but `gh` is authenticated (checked above) — reuse
+    // its credential so posting works with `gh auth login` alone instead of
+    // 401ing with "Bad credentials".
+    if ($githubToken === '') {
+        $ghAuthToken = trim((string)shell_exec('gh auth token 2>/dev/null'));
+        if ($ghAuthToken !== '') {
+            $githubToken = $ghAuthToken;
+        }
     }
 
     // Pass tokens to child processes if set
@@ -1145,25 +1201,48 @@ function processPrJob(array $job, string $repo, string $jobId, array $auditTypes
             // Anchor inline comments on the reviewed commit.
             $sha = $commitSha;
         } else {
-            // Get the PR diff, apply it, and commit it as a snapshot. After a
-            // successful apply the working tree holds the PR changes on top of
-            // the base commit; we record the base commit as `_base` and commit
-            // the PR changes so HEAD = base+PR with a clean tree.
-            $diff = getPRDiff($repo, $prNumber);
-            if ($diff !== null && $diff !== '') {
-                verbose_log("applying PR diff for {$repo}#{$prNumber}", 2);
-                if (applyPRDiff($checkoutPath, $diff)) {
-                    if (commitPrSnapshot($checkoutPath, $prNumber)) {
-                        $baselineReady = true;
-                        verbose_log("PR snapshot committed (HEAD=base+PR, _base=base)", 2);
-                    } else {
-                        verbose_log("failed to commit PR snapshot - agent fixes cannot be captured", 1);
-                    }
+            // Pin the review to a specific head commit (mirrors the push path)
+            // so a later synchronize push or a base branch that moves between
+            // enqueue and processing cannot make us review the wrong tree while
+            // anchoring comments to a stale SHA. Resolve the head SHA, then pin
+            // _base = GitHub's 3-dot merge-base and HEAD = head SHA.
+            $headSha = resolvePrHeadSha($job, $repo, $prNumber);
+            if ($headSha !== '') {
+                verbose_log("pinning PR review to head commit {$headSha} for {$repo}#{$prNumber}", 2);
+                $baseErr = setupPrHeadBaseline($checkoutPath, $repo, $baseBranch, $headSha);
+                if ($baseErr === 'true') {
+                    $baselineReady = true;
+                    // Anchor inline comments on the EXACT reviewed commit.
+                    $sha = $headSha;
+                    verbose_log("PR head baseline pinned (_base=merge-base, HEAD={$headSha})", 2);
                 } else {
-                    verbose_log("failed to apply PR diff - analyzing base branch only", 2);
+                    verbose_log("PR head baseline failed ({$baseErr}); falling back to live diff apply", 1);
                 }
             } else {
-                verbose_log("no diff retrieved - analyzing base branch only", 2);
+                verbose_log("could not resolve PR head SHA; falling back to live diff apply", 1);
+            }
+
+            // Fallback: head SHA unresolved or the merge-base/head SHA could not
+            // be fetched. Use the live `gh pr diff`, apply it, and commit it as a
+            // snapshot (HEAD = base+PR, _base = base commit). This path is NOT
+            // pinned to a specific commit — it reviews the current PR state.
+            if (!$baselineReady) {
+                $diff = getPRDiff($repo, $prNumber);
+                if ($diff !== null && $diff !== '') {
+                    verbose_log("applying PR diff for {$repo}#{$prNumber}", 2);
+                    if (applyPRDiff($checkoutPath, $diff)) {
+                        if (commitPrSnapshot($checkoutPath, $prNumber)) {
+                            $baselineReady = true;
+                            verbose_log("PR snapshot committed (HEAD=base+PR, _base=base)", 2);
+                        } else {
+                            verbose_log("failed to commit PR snapshot - agent fixes cannot be captured", 1);
+                        }
+                    } else {
+                        verbose_log("failed to apply PR diff - analyzing base branch only", 2);
+                    }
+                } else {
+                    verbose_log("no diff retrieved - analyzing base branch only", 2);
+                }
             }
         }
 
@@ -1962,6 +2041,64 @@ function setupPushBaseline(string $checkoutPath, string $repo, string $beforeSha
 function setupCommitScopedBaseline(string $checkoutPath, string $repo, string $sha): string
 {
     return setupCommitRangeBaseline($checkoutPath, $repo, '', $sha);
+}
+
+/**
+ * Resolve GitHub's true merge-base for a PR head against its base branch using
+ * the compare API's 3-dot semantics — the same base the PR "Files changed" view
+ * diffs against. Prefers .merge_base_commit.sha, falls back to .base_commit.sha
+ * (a.k.a. .base.sha). Returns '' when the API is unavailable so the caller can
+ * fall back to the base branch tip.
+ */
+function getPrMergeBaseSha(string $repo, string $baseBranch, string $headSha): string
+{
+    if ($repo === '' || $baseBranch === '' || $headSha === '') {
+        return '';
+    }
+    $cmd = sprintf(
+        'gh api %s 2>&1',
+        escapeshellarg("repos/{$repo}/compare/{$baseBranch}...{$headSha}")
+    );
+    $output = [];
+    $ret = 0;
+    exec($cmd, $output, $ret);
+    if ($ret !== 0) {
+        verbose_log('getPrMergeBaseSha: compare API failed: ' . substr(implode("\n", $output), 0, 200), 2);
+        return '';
+    }
+    $json = json_decode(implode("\n", $output), true);
+    if (!is_array($json)) {
+        return '';
+    }
+    foreach (['merge_base_commit', 'base_commit', 'base'] as $key) {
+        $sha = $json[$key]['sha'] ?? '';
+        if (is_string($sha) && $sha !== '') {
+            return $sha;
+        }
+    }
+    return '';
+}
+
+/**
+ * Pin a normal (non-commit-scoped) PR review to a specific head commit, mirroring
+ * the push path. Resolves GitHub's 3-dot merge-base so `git diff _base HEAD`
+ * matches the PR's Files-changed view exactly, then materializes
+ * _base = merge-base and HEAD = $headSha via setupCommitRangeBaseline(). When the
+ * merge-base cannot be fetched from the API, falls back to the base branch tip.
+ * Returns 'true' or an error string.
+ */
+function setupPrHeadBaseline(string $checkoutPath, string $repo, string $baseBranch, string $headSha): string
+{
+    if ($headSha === '') {
+        return 'missing head sha';
+    }
+    $mergeBase = getPrMergeBaseSha($repo, $baseBranch, $headSha);
+    if ($mergeBase === '') {
+        // API unavailable: use the base branch tip as the baseline. An empty
+        // baseBranch degrades to headSha^ inside setupCommitRangeBaseline().
+        $mergeBase = $baseBranch;
+    }
+    return setupCommitRangeBaseline($checkoutPath, $repo, $mergeBase, $headSha);
 }
 
 /**
