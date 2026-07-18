@@ -276,7 +276,7 @@ class CodeReviewQueue
             'id' => self::uuidV4(),
             'ts' => time(),
             'kind' => 'push',
-            'repo' => $job['repo'],
+            'repo' => $job['repo'] ?? '',
             'action' => 'push',
             'ref' => $job['ref'] ?? '',
             'before_sha' => $job['before_sha'] ?? '',
