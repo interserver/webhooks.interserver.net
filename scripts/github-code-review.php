@@ -31,6 +31,7 @@ declare(strict_types=1);
  *
  * Usage:
  *   php scripts/github-code-review.php [-v|--verbose]... [-a|--show-agent]
+ *       [-p|--parallel=N] [--prompt=STR] [--prompt-file=FILE]
  *
  * Verbose levels:
  *   -v    [INFO]   Essential progress (job start/complete/errors)
@@ -40,6 +41,16 @@ declare(strict_types=1);
  *
  * -a / --show-agent streams opencode output (--format default plain text and
  * --format json NDJSON events) to the console in real-time at any verbosity.
+ *
+ * -p / --parallel=N forks N worker processes that drain the shared queue
+ * concurrently. Each worker gets its OWN checkout root ({CHECKOUT_ROOT}/wN) and
+ * checkout-cache namespace so two workers reviewing the same repo:branch can
+ * never share a working tree, and every output line is tagged with the worker +
+ * queue entry it belongs to (e.g. "[w0 owner/repo#42 a1b2c3d4] …").
+ *
+ * --prompt / --prompt-file replace the built-in review prompt
+ * (scripts/prompts/review.txt) with an inline string or the contents of a file;
+ * any audit-type scope still applies on top. --prompt wins if both are given.
  *
  * Ctrl-C once: graceful shutdown — the in-flight opencode process group is
  * terminated, the job is requeued, and the worker exits.
@@ -79,15 +90,20 @@ $GLOBALS['activeChildPid'] = 0;        // pid (process-group leader) of in-fligh
 $GLOBALS['signalCount'] = 0;           // SIGINT/SIGTERM presses so far
 $GLOBALS['interruptReadFd'] = null;    // socket pair used to wake stream_select() from the signal handler
 $GLOBALS['interruptWriteFd'] = null;
+$GLOBALS['parallel'] = 1;              // --parallel N: number of concurrent worker processes (1 = no fork)
+$GLOBALS['promptOverride'] = null;     // --prompt / --prompt-file: custom review prompt text (null = built-in)
+$GLOBALS['workerSlot'] = -1;           // >=0 identifies a forked parallel worker; -1 = single (unforked) worker
+$GLOBALS['logPrefix'] = '';            // prepended to every emitted log/stream line (per-worker/per-job tag)
+$GLOBALS['checkoutCacheNs'] = '';      // per-worker namespace for the Redis checkout-cache key (parallel isolation)
 
 if ($__directRun) {
     // At file scope these are the same variables as the $GLOBALS defaults above
     $verbose = $GLOBALS['verbose'];
     $optind = 0;
     // NOTE: no ':' after 'b'/'a' — they are flags, not options with values.
-    $args = getopt('vhwba', ['verbose', 'help', 'wait-if-empty', 'review-bots', 'show-agent', 'show-all-issues', 'only-prep', 'timeout:', 'log::'], $optind);
+    $args = getopt('vhwbap:', ['verbose', 'help', 'wait-if-empty', 'review-bots', 'show-agent', 'show-all-issues', 'only-prep', 'timeout:', 'log::', 'parallel:', 'prompt:', 'prompt-file:'], $optind);
     if (isset($args['h']) || isset($args['help'])) {
-        fwrite(STDOUT, "Usage: php scripts/github-code-review.php [-v|--verbose]... [-w|--wait-if-empty] [-b|--review-bots] [-a|--show-agent] [--show-all-issues] [--only-prep] [--timeout=30m] [--log=FILE]\n");
+        fwrite(STDOUT, "Usage: php scripts/github-code-review.php [-v|--verbose]... [-w|--wait-if-empty] [-b|--review-bots] [-a|--show-agent] [--show-all-issues] [--only-prep] [--timeout=30m] [-p|--parallel=N] [--prompt=STR] [--prompt-file=FILE] [--log=FILE]\n");
         fwrite(STDOUT, "  -v, --verbose      Increase verbosity (can stack: -vv, -vvv, -vvvv)\n");
         fwrite(STDOUT, "    -v   [INFO]     Essential progress (job start/complete/errors)\n");
         fwrite(STDOUT, "    -vv  [DEBUG]    Detailed progress (checkpoints, function entry)\n");
@@ -102,6 +118,13 @@ if ($__directRun) {
         fwrite(STDOUT, "                        running opencode. The checkout is left in place for manual\n");
         fwrite(STDOUT, "                        testing; a cleanup command is printed. (Implies -w.)\n");
         fwrite(STDOUT, "  --timeout=N           Timeout for opencode analysis (default: 30m). Examples: 30, 30s, 30m\n");
+        fwrite(STDOUT, "  -p, --parallel=N      Process N queued reviews concurrently in N forked workers\n");
+        fwrite(STDOUT, "                        (default 1). Each worker gets its own isolated checkout tree and\n");
+        fwrite(STDOUT, "                        checkout cache so parallel reviews of the same repo can't collide;\n");
+        fwrite(STDOUT, "                        every output line is tagged with the worker + queue entry it came from.\n");
+        fwrite(STDOUT, "  --prompt=STR          Use STR as the review prompt instead of the built-in prompt\n");
+        fwrite(STDOUT, "                        (scripts/prompts/review.txt). Any audit-type scope still applies.\n");
+        fwrite(STDOUT, "  --prompt-file=FILE    Read the review prompt from FILE (overridden by --prompt if both given)\n");
         fwrite(STDOUT, "  --log=FILE            Append all log output to FILE (in addition to stderr)\n");
         fwrite(STDOUT, "  -h, --help        Show this help message\n");
         fwrite(STDOUT, "\n  Press Ctrl-C once for graceful shutdown (stops opencode, finishes cleanup);\n");
@@ -148,6 +171,79 @@ if ($__directRun) {
     if (isset($args['log'])) {
         $logFile = $args['log'] !== false ? $args['log'] : 'github-code-review.log';
     }
+
+    // --parallel / -p: number of concurrent worker processes.
+    if (isset($args['p']) || isset($args['parallel'])) {
+        $rawP = $args['parallel'] ?? $args['p'];
+        $rawP = is_array($rawP) ? end($rawP) : $rawP;
+        $n = (int)$rawP;
+        if ($n < 1) {
+            fwrite(STDERR, "github-code-review: invalid --parallel value '{$rawP}', using 1\n");
+            $n = 1;
+        }
+        $GLOBALS['parallel'] = $n;
+    }
+
+    // --prompt / --prompt-file: override the review prompt. --prompt (an inline
+    // string) wins over --prompt-file when both are supplied.
+    if (isset($args['prompt']) && $args['prompt'] !== false && $args['prompt'] !== '') {
+        $GLOBALS['promptOverride'] = is_array($args['prompt']) ? (string)end($args['prompt']) : (string)$args['prompt'];
+        if (isset($args['prompt-file'])) {
+            fwrite(STDERR, "github-code-review: both --prompt and --prompt-file given; using --prompt\n");
+        }
+    } elseif (isset($args['prompt-file']) && $args['prompt-file'] !== false && $args['prompt-file'] !== '') {
+        $pf = is_array($args['prompt-file']) ? (string)end($args['prompt-file']) : (string)$args['prompt-file'];
+        if (!is_file($pf) || !is_readable($pf)) {
+            fwrite(STDERR, "github-code-review: --prompt-file '{$pf}' does not exist or is not readable\n");
+            exit(1);
+        }
+        $contents = file_get_contents($pf);
+        if ($contents === false || trim($contents) === '') {
+            fwrite(STDERR, "github-code-review: --prompt-file '{$pf}' could not be read or is empty\n");
+            exit(1);
+        }
+        $GLOBALS['promptOverride'] = $contents;
+    }
+}
+
+/**
+ * The per-worker/per-job tag prepended to every emitted log and stream line.
+ *
+ * Empty for a single (unforked) worker so its output is byte-for-byte what it
+ * always was. A parallel worker sets this to something like "[w0 owner/repo#42
+ * a1b2c3d4] " so interleaved output from concurrent workers can be told apart.
+ */
+function outputPrefix(): string
+{
+    return (string)($GLOBALS['logPrefix'] ?? '');
+}
+
+/**
+ * Build the log/stream tag for the current worker. Returns '' for a single
+ * (unforked) worker so its output is unchanged; a parallel worker returns
+ * "[wN] " when idle and "[wN owner/repo#42 a1b2c3d4] " while a job is in flight,
+ * so every line names the worker and the exact queue entry it belongs to.
+ *
+ * @param array<string, mixed>|null $job
+ */
+function buildWorkerLogPrefix(?array $job = null): string
+{
+    $slot = (int)($GLOBALS['workerSlot'] ?? -1);
+    if ($slot < 0) {
+        return '';
+    }
+    $tag = 'w' . $slot;
+    if ($job !== null) {
+        $repo = (string)($job['repo'] ?? '?');
+        $id = substr((string)($job['id'] ?? ''), 0, 8);
+        if (CodeReviewQueue::jobKind($job) === 'push') {
+            $where = '@' . (string)($job['ref'] ?? '?');
+        } else {
+            $where = '#' . (string)($job['pr_number'] ?? '?');
+        }
+        $tag .= ' ' . $repo . $where . ($id !== '' ? ' ' . $id : '');
+    }
+    return '[' . $tag . '] ';
 }
 
 /**
@@ -167,7 +263,7 @@ function verbose_log(string $message, int $level = 1): void
             4 => '[RAW]',
             default => '[VERBOSE]'
         };
-        $line = "github-code-review: {$prefix} {$message}";
+        $line = outputPrefix() . "github-code-review: {$prefix} {$message}";
         error_log($line);
         if ($logFile !== null) {
             $timestamp = date('Y-m-d H:i:s.') . sprintf('%06d', (microtime(true) - floor(microtime(true))) * 1000000);
@@ -184,11 +280,11 @@ function verbose_raw(string $label, string $output): void
     global $verbose, $logFile;
     if ($verbose >= 4) {
         $prefix = '[RAW]';
-        $line = "github-code-review: {$prefix} {$label}";
+        $line = outputPrefix() . "github-code-review: {$prefix} {$label}";
         error_log($line);
-        error_log("--- BEGIN {$label} ---");
+        error_log(outputPrefix() . "--- BEGIN {$label} ---");
         error_log($output);
-        error_log("--- END {$label} ---");
+        error_log(outputPrefix() . "--- END {$label} ---");
         if ($logFile !== null) {
             $timestamp = date('Y-m-d H:i:s.') . sprintf('%06d', (microtime(true) - floor(microtime(true))) * 1000000);
             file_put_contents($logFile, "[{$timestamp}] {$line}\n[{$timestamp}] --- BEGIN {$label} ---\n{$output}\n[{$timestamp}] --- END {$label} ---\n", FILE_APPEND);
@@ -204,7 +300,7 @@ function verbose_markdown(string $label, string $markdown): void
     global $verbose, $logFile;
     if ($verbose >= 4) {
         $prefix = '[MD]';
-        $line = "github-code-review: {$prefix} {$label}";
+        $line = outputPrefix() . "github-code-review: {$prefix} {$label}";
         error_log($line);
         try {
             $colored = \SugarCraft\Shine\Renderer::renderMarkdown($markdown);
@@ -508,6 +604,7 @@ function runStreamedCommand(string $cmd, ?string $cwd, int $timeout, bool $strea
     $timeoutSecs = $timeout > 0 ? $timeout : 86400; // safety cap when no timeout given
     $deadline = microtime(true) + $timeoutSecs;
     $stdoutBuf = '';
+    $stderrBuf = ''; // only used when an output prefix is active (parallel workers)
 
     $displayLine = static function (string $rawLine) use ($stream, $verbose, $logFile): void {
         if (!$stream) {
@@ -517,11 +614,15 @@ function runStreamedCommand(string $cmd, ?string $cwd, int $timeout, bool $strea
         if ($display === null) {
             return;
         }
-        fwrite(STDERR, $display . "\n");
+        // Tag every line (including continuation lines of a multi-line display)
+        // with the worker/job prefix so concurrent workers stay disentangled.
+        $pfx = outputPrefix();
+        $out = $pfx === '' ? $display : $pfx . str_replace("\n", "\n" . $pfx, $display);
+        fwrite(STDERR, $out . "\n");
         fflush(STDERR);
         if ($logFile !== null && trim($display) !== '') {
             $timestamp = date('Y-m-d H:i:s.') . sprintf('%06d', (microtime(true) - floor(microtime(true))) * 1000000);
-            file_put_contents($logFile, "[{$timestamp}] [AGENT] {$display}\n", FILE_APPEND);
+            file_put_contents($logFile, "[{$timestamp}] {$pfx}[AGENT] {$display}\n", FILE_APPEND);
         }
     };
 
@@ -573,8 +674,20 @@ function runStreamedCommand(string $cmd, ?string $cwd, int $timeout, bool $strea
             if (is_string($chunk) && $chunk !== '') {
                 $result['stderr'] .= $chunk;
                 if ($stream) {
-                    fwrite(STDERR, $chunk);
-                    fflush(STDERR);
+                    $pfx = outputPrefix();
+                    if ($pfx === '') {
+                        fwrite(STDERR, $chunk);
+                        fflush(STDERR);
+                    } else {
+                        // Line-buffer so each tagged line is whole, not split
+                        // mid-line across chunk boundaries.
+                        $stderrBuf .= $chunk;
+                        while (($pos = strpos($stderrBuf, "\n")) !== false) {
+                            fwrite(STDERR, $pfx . substr($stderrBuf, 0, $pos) . "\n");
+                            $stderrBuf = substr($stderrBuf, $pos + 1);
+                        }
+                        fflush(STDERR);
+                    }
                 }
             }
         }
@@ -583,6 +696,10 @@ function runStreamedCommand(string $cmd, ?string $cwd, int $timeout, bool $strea
     // Flush any partial final line
     if ($stdoutBuf !== '') {
         $displayLine($stdoutBuf);
+    }
+    if ($stderrBuf !== '') {
+        fwrite(STDERR, outputPrefix() . $stderrBuf . "\n");
+        fflush(STDERR);
     }
 
     // Make sure the child (and its whole process group) is dead before
@@ -922,7 +1039,7 @@ function installSignalHandlers(): void
         $name = $signo === SIGTERM ? 'SIGTERM' : 'SIGINT';
         $count = ++$GLOBALS['signalCount'];
         if ($count === 1) {
-            fwrite(STDERR, "\ngithub-code-review: received {$name}, shutting down (press Ctrl-C again to force quit)...\n");
+            fwrite(STDERR, "\n" . outputPrefix() . "github-code-review: received {$name}, shutting down (press Ctrl-C again to force quit)...\n");
             // Wake up any stream_select() immediately so loops notice $running
             if (is_resource($GLOBALS['interruptWriteFd'] ?? null)) {
                 @fwrite($GLOBALS['interruptWriteFd'], 'i');
@@ -930,7 +1047,7 @@ function installSignalHandlers(): void
             // Stop the in-flight opencode child (and its subagent process group)
             terminateChildGroup((int)$GLOBALS['activeChildPid'], SIGTERM);
         } else {
-            fwrite(STDERR, "github-code-review: force quit\n");
+            fwrite(STDERR, outputPrefix() . "github-code-review: force quit\n");
             terminateChildGroup((int)$GLOBALS['activeChildPid'], SIGKILL);
             exit(130);
         }
@@ -949,6 +1066,9 @@ if ($__directRun) {
 function main(): void
 {
     global $githubToken, $checkoutRoot, $opencodeAnalyzeCmd, $verbose, $waitIfEmpty, $reviewBots, $running, $onlyPrep;
+
+    // Idle tag names just the worker; per-job it is narrowed to the queue entry.
+    $GLOBALS['logPrefix'] = buildWorkerLogPrefix();
 
     verbose_log("worker started (verbose level {$verbose})", 1);
     verbose_log('waitIfEmpty=' . ($waitIfEmpty ? 'true' : 'false') . ' - ' . ($waitIfEmpty ? 'will wait for jobs' : 'will exit when queue empty'), 1);
@@ -987,6 +1107,9 @@ function main(): void
         $jobId = $job['id'] ?? 'unknown';
         $repo = $job['repo'] ?? 'unknown';
         $kind = CodeReviewQueue::jobKind($job);
+
+        // Narrow the log tag to this queue entry for the duration of the job.
+        $GLOBALS['logPrefix'] = buildWorkerLogPrefix($job);
 
         if ($kind === 'push') {
             $ref = $job['ref'] ?? 'unknown';
@@ -1044,6 +1167,9 @@ function main(): void
             break;
         }
 
+        // Back to the idle worker-level tag until the next job is dequeued.
+        $GLOBALS['logPrefix'] = buildWorkerLogPrefix();
+
         // Small delay between jobs to avoid hammering
         verbose_log('sleeping 0.5s before next job', 3);
         usleep(500000); // 0.5s
@@ -1056,6 +1182,124 @@ function main(): void
             break;
         }
     }
+}
+
+/**
+ * Fork $n worker processes, each running main() over the SHARED Redis queue but
+ * with its OWN isolated checkout root ({checkoutRoot}/wN) and checkout-cache
+ * namespace (wN:), so two workers reviewing the same repo:branch can never share
+ * a working tree or clobber each other's cached checkout. Every worker tags its
+ * output with a [wN owner/repo#42 …] prefix so the interleaved streams stay
+ * legible. The parent forwards SIGINT/SIGTERM to the workers and reaps them.
+ *
+ * Must fork BEFORE any Redis/opencode work so each child opens its own
+ * connections and manages its own opencode child process group independently.
+ */
+function runParallelWorkers(int $n): void
+{
+    global $checkoutRoot;
+
+    if (!function_exists('pcntl_fork')) {
+        verbose_log('parallel requested but pcntl_fork is unavailable; running a single worker', 1);
+        main();
+        return;
+    }
+
+    $baseRoot = rtrim($checkoutRoot, '/');
+    $isolated = function_exists('posix_setpgid'); // can we give each worker its own process group?
+    $children = []; // pid => slot
+
+    for ($slot = 0; $slot < $n; $slot++) {
+        $pid = pcntl_fork();
+        if ($pid === -1) {
+            fwrite(STDERR, "github-code-review: fork failed for worker slot {$slot}\n");
+            continue;
+        }
+        if ($pid === 0) {
+            // === CHILD (worker) ===
+            // Own process group: the terminal's Ctrl-C then reaches only the
+            // parent, which forwards to us exactly once — so a single Ctrl-C is a
+            // graceful stop, not an accidental force-quit.
+            if ($isolated) {
+                @posix_setpgid(0, 0);
+            }
+            // Give each worker its OWN interrupt pipe. The pair created pre-fork
+            // is shared across all children, so without this one worker's signal
+            // wakeup could be consumed by another's stream_select(). Close the
+            // inherited endpoints and make a fresh pair.
+            foreach (['interruptReadFd', 'interruptWriteFd'] as $fdKey) {
+                if (is_resource($GLOBALS[$fdKey] ?? null)) {
+                    @fclose($GLOBALS[$fdKey]);
+                }
+                $GLOBALS[$fdKey] = null;
+            }
+            createInterruptPipe();
+            $GLOBALS['workerSlot'] = $slot;
+            $GLOBALS['checkoutCacheNs'] = 'w' . $slot . ':';
+            // The file-scope $checkoutRoot IS $GLOBALS['checkoutRoot'], so setting
+            // the global re-points every `global $checkoutRoot;` user
+            // (buildCheckoutPath, checkoutBranch, path validation, …).
+            $GLOBALS['checkoutRoot'] = $baseRoot . '/w' . $slot;
+            main();
+            exit(0);
+        }
+        // === PARENT ===
+        $children[$pid] = $slot;
+        // Set the child's group from the parent side too — race-free: whichever
+        // setpgid wins, the child ends up leader of its own group.
+        if ($isolated) {
+            @posix_setpgid($pid, $pid);
+        }
+    }
+
+    if ($children === []) {
+        fwrite(STDERR, "github-code-review: no parallel workers could be started\n");
+        return;
+    }
+
+    // Parent: forward shutdown signals to each worker (once per signal) and reap.
+    // When workers are NOT isolated they share our process group and the terminal
+    // already delivered the signal to them, so we must NOT re-signal (that would
+    // turn a single Ctrl-C into a force-quit).
+    $forward = static function (int $signo) use (&$children, $isolated): void {
+        $GLOBALS['running'] = false;
+        if (!$isolated) {
+            return;
+        }
+        foreach (array_keys($children) as $pid) {
+            if (function_exists('posix_kill')) {
+                @posix_kill($pid, $signo);
+            }
+        }
+    };
+    if (function_exists('pcntl_signal')) {
+        pcntl_signal(SIGINT, $forward);
+        pcntl_signal(SIGTERM, $forward);
+    }
+
+    verbose_log('parallel: started ' . count($children) . ' worker(s) (pids: ' . implode(', ', array_keys($children)) . ')', 1);
+
+    while ($children !== []) {
+        $status = 0;
+        $pid = pcntl_waitpid(-1, $status, WNOHANG);
+        if ($pid > 0) {
+            $slot = $children[$pid] ?? '?';
+            $code = function_exists('pcntl_wifexited') && pcntl_wifexited($status) ? pcntl_wexitstatus($status) : -1;
+            verbose_log("parallel: worker slot {$slot} (pid {$pid}) exited (code {$code})", 1);
+            unset($children[$pid]);
+            continue;
+        }
+        if ($pid === -1) {
+            break; // no children remain
+        }
+        // $pid === 0: nothing exited yet — nap, then service any pending signals.
+        usleep(200000);
+        if (function_exists('pcntl_signal_dispatch')) {
+            pcntl_signal_dispatch();
+        }
+    }
+
+    verbose_log('parallel: all workers exited', 1);
 }
 
 /**
@@ -1376,8 +1620,14 @@ function runReviewAndPost(string $checkoutPath, string $jobId, array $postCtx, a
     $label = $prNumber > 0 ? "{$repo}#{$prNumber}" : $repo;
 
     // Compose the prompt: full/all reviews everything, otherwise prepend a scope
-    // line restricting the review to the selected audit categories.
-    $promptText = composeReviewPrompt($auditTypes);
+    // line restricting the review to the selected audit categories. A
+    // --prompt/--prompt-file override replaces the built-in base prompt (audit
+    // scoping, if any, still applies on top).
+    $promptOverride = isset($GLOBALS['promptOverride']) && is_string($GLOBALS['promptOverride']) ? $GLOBALS['promptOverride'] : null;
+    if ($promptOverride !== null) {
+        verbose_log('using custom review prompt override (' . strlen($promptOverride) . ' bytes)', 2);
+    }
+    $promptText = composeReviewPrompt($auditTypes, $promptOverride);
 
     verbose_log("starting opencode analysis for {$label} in {$checkoutPath}" . ($opencodeTimeout > 0 ? " (timeout: " . ($opencodeTimeout >= 3600 ? round($opencodeTimeout / 3600, 1) . "h" : round($opencodeTimeout / 60, 1) . "m") . ")" : ""), 2);
     $analysisOutput = runOpencodeAnalysis($checkoutPath, $jobId, $opencodeAnalyzeCmd, $showAgent, $opencodeTimeout, $promptText);
@@ -1640,6 +1890,23 @@ function processIssue(array $issue, string $checkoutPath, string $token, array $
 }
 
 /**
+ * Feedback blurb appended to every posted review comment.
+ *
+ * Asks the reader to react 👍 when the finding helped and was used, 👎 when it
+ * was wrong/bad info, and to leave no reaction when the finding was valid but
+ * they simply chose not to apply it — that keeps the up/down signal meaningful.
+ *
+ * NOTE: must not contain a '[' character — buildGroupComment()'s no-label test
+ * asserts the group body has none, and this footer rides along on that body.
+ */
+function reviewFeedbackFooter(): string
+{
+    return "\n---\n"
+        . "React 👍 if this helped and you used it, or 👎 if it was wrong or bad info. "
+        . "If it was valid but you decided not to use it, please leave no reaction.\n";
+}
+
+/**
  * Build a PR comment for a single issue
  *
  * @param array $issue Issue details
@@ -1687,6 +1954,7 @@ function buildIssueComment(array $issue, ?string $diff, string $repo, int $prNum
     }
 
     $body .= "*Automated review by Code Review Bot*\n";
+    $body .= reviewFeedbackFooter();
 
     return $body;
 }
@@ -1749,6 +2017,7 @@ function buildCombinedComment(array $issues, string $combinedDiff): string
         $body .= "```\n";
     }
     $body .= "\n*Automated review by Code Review Bot*\n";
+    $body .= reviewFeedbackFooter();
     return $body;
 }
 
@@ -1768,6 +2037,7 @@ function buildGroupComment(array $group, string $splitBy, int $index, int $total
         $body .= renderIssueBullet($issue) . "\n";
     }
     $body .= "\n*Automated review by Code Review Bot*\n";
+    $body .= reviewFeedbackFooter();
     return $body;
 }
 
@@ -2021,7 +2291,20 @@ function setupCommitRangeBaseline(string $checkoutPath, string $repo, string $ba
     if ($ret !== 0) {
         return 'git baseline setup failed: ' . substr(implode("\n", $output), 0, 200);
     }
-    verbose_log("setupCommitRangeBaseline: _base={$baseRef} HEAD={$headSha} in {$checkoutPath}", 3);
+
+    // Verify we are actually sitting on the requested commit before the review
+    // runs — the whole point is to review THIS commit, not whatever the branch
+    // tip happens to be. Accept a short-SHA request by prefix-matching the
+    // resolved full HEAD.
+    $actualHead = trim((string)shell_exec(
+        'cd ' . escapeshellarg($checkoutPath) . ' && git rev-parse HEAD 2>/dev/null'
+    ));
+    $cmpLen = min(strlen($actualHead), strlen($headSha));
+    if ($actualHead === '' || $cmpLen === 0 || strncasecmp($actualHead, $headSha, $cmpLen) !== 0) {
+        return "git baseline setup failed: HEAD is '{$actualHead}', expected {$headSha}";
+    }
+
+    verbose_log("setupCommitRangeBaseline: _base={$baseRef} HEAD={$headSha} (checked out {$actualHead}) in {$checkoutPath}", 3);
     return 'true';
 }
 
@@ -2217,6 +2500,20 @@ function buildCheckoutPath(string $checkoutRoot, string $repo, string $branch): 
 }
 
 /**
+ * Build the Redis checkout-cache key for a repo+branch.
+ *
+ * The optional per-worker namespace ($GLOBALS['checkoutCacheNs'], e.g. "w0:")
+ * keeps parallel workers from sharing a cached checkout PATH for the same
+ * repo:branch — each worker owns its own isolated tree, so they must own
+ * separate cache entries too or they'd overwrite each other's path.
+ */
+function checkoutCacheKey(string $repo, string $branch): string
+{
+    $ns = (string)($GLOBALS['checkoutCacheNs'] ?? '');
+    return "github:checkout:v1:{$ns}{$repo}:{$branch}";
+}
+
+/**
  * Get a cached checkout path for a repo+branch, or null if not cached / invalid.
  */
 function getCachedCheckoutPath(string $repo, string $branch): ?string
@@ -2225,7 +2522,7 @@ function getCachedCheckoutPath(string $repo, string $branch): ?string
     if ($redis === null) {
         return null;
     }
-    $key = "github:checkout:v1:{$repo}:{$branch}";
+    $key = checkoutCacheKey($repo, $branch);
     $path = $redis->get($key);
     if ($path === null || $path === false) {
         return null;
@@ -2253,7 +2550,7 @@ function cacheCheckoutPath(string $repo, string $branch, string $path): void
     if ($redis === null) {
         return;
     }
-    $key = "github:checkout:v1:{$repo}:{$branch}";
+    $key = checkoutCacheKey($repo, $branch);
     $redis->setex($key, 86400, $path);
     verbose_log("checkout cached: {$repo}:{$branch} → {$path} (TTL=24h)", 3);
 }
@@ -2267,7 +2564,7 @@ function invalidateCachedCheckout(string $repo, string $branch): void
     if ($redis === null) {
         return;
     }
-    $key = "github:checkout:v1:{$repo}:{$branch}";
+    $key = checkoutCacheKey($repo, $branch);
     $redis->del($key);
 }
 
@@ -3308,5 +3605,15 @@ function handleFailure(array $job, string $reason): void
 
 // Run the worker (only when executed directly — not when include()d by tests)
 if ($__directRun) {
-    main();
+    $parallel = (int)($GLOBALS['parallel'] ?? 1);
+    // --only-prep prepares exactly ONE job and prints instructions; forking
+    // several workers to do that makes no sense, so keep it single-process.
+    if ($parallel > 1 && !$onlyPrep) {
+        runParallelWorkers($parallel);
+    } else {
+        if ($parallel > 1 && $onlyPrep) {
+            fwrite(STDERR, "github-code-review: --only-prep ignores --parallel; running one worker\n");
+        }
+        main();
+    }
 }

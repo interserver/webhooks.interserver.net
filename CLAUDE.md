@@ -19,7 +19,7 @@ php scripts/github-code-review.php
 - **Core**: `src/GithubWebhook.php` · `src/GithubMessageBuilder.php` · `src/NotificationQueue.php` · `src/CodeReviewQueue.php` · `src/IgnoredEventException.php` · `src/NotImplementedException.php`
 - **Config**: `.env` (copied from `.env.dist`) — defines `GITHUB_WEBHOOKS_SECRET`, `NOTIF_QUEUE_ENABLED`, `NOTIF_QUEUE_KEY_PREFIX`, `REDIS_HOST`, `REDIS_PORT`, `LOG_LEVEL`, `RATE_LIMIT_WINDOW`, plus code-review queue keys. RocketChat / Teams webhook URLs live in `src/config.php` (gitignored) under `$chatChannels['rocketchat']` / `$chatChannels['teams']`
 - **Logs**: `log/Y/m/d/` — JSON files named `His_eventtype_action_user_repo.json` (verbosity controlled by `LOG_LEVEL`)
-- **Code review**: `src/CodeReviewQueue.php` enqueues push events for async review by `scripts/github-code-review.php`
+- **Code review**: `src/CodeReviewQueue.php` enqueues push events for async review by `scripts/github-code-review.php`; `scripts/github-code-review-list.php` lists queued review jobs
 - **Field analysis**: `scripts/analyze_fields.php`, `scripts/filter_webhook.php`, `scripts/filter_webhook_batch.php` produce reports under `field_analysis_full/` (per-group JSON, `frequency_matrix.json`, `FIELD_CATEGORIZATION.md`)
 - **Tests**: `tests/` via `phpunit.xml` · fixtures in `tests/events/{event_name}/`
 - **Quality**: `phpstan.neon` · `phpstan-bootstrap.php` · `.php-cs-fixer.dist.php` (PSR2 + PHP74Migration)
@@ -50,22 +50,26 @@ php -d phar.readonly=0 build/github-review.phar --version
 - **Entry point**: `bin/github-review`
 - **Application**: `src/Cli/Application.php`
 - **Commands**: `src/Cli/Command/`
+  - `AbstractCommand.php` — Base command
   - `ListCommand.php` — List queued review jobs
   - `MetricsCommand.php` — Show queue statistics
   - `SubmitCommand.php` — Submit PR for review
   - `StatusCommand.php` — Check review status
   - `CancelCommand.php` — Cancel queued jobs
   - `ConfigCommand.php` — Manage configuration
+  - `ActivityCommand.php` — GitHub activity view
 - **Services**: `src/Cli/Service/`
   - `CodeAnalyzer.php` — OpenCode integration
   - `CheckoutManager.php` — Git checkout management
   - `DiffGenerator.php` — Diff generation
   - `ReviewPoster.php` — GitHub API posting
+  - `GithubActivityService.php` — GitHub activity fetching
 - **Config**: `src/Cli/Config/ConfigLoader.php`
+- **Exceptions**: `src/Cli/Exception/` — `ReviewCliException.php`, `ExceptionCodes.php`
 - **Renderers**: `src/Cli/Renderer/`
   - `JsonRenderer.php` — JSON output
   - `TableRenderer.php` — Table output
-- **Interactor**: `src/Cli/Interactor/InteractiveInteractor.php`
+- **Interactor**: `src/Cli/Interactor/` — `InteractiveInteractor.php`, `ActivityInteractor.php`, `InteractiveTui.php`, `TuiPane.php`, `TuiState.php`
 
 ### CLI Tests
 
