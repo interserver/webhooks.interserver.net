@@ -5,15 +5,49 @@ The changes may come from a pull request, a pushed commit, or a range of commits
 
 ## What changed
 
-The changes under review have been committed as a snapshot on top of the code as
-it was before them. To see EXACTLY what changed, run:
+The changes under review are the commit range `_base`..`HEAD`: `_base` is the
+baseline (the code before the change) and `HEAD` is the baseline plus the changes
+under review. That range — and only that range — is your review scope. Read the
+surrounding code for context, but do not go hunting for unrelated problems
+elsewhere in the repository.
 
-    git diff _base HEAD
+Do NOT blindly run `git diff _base HEAD` on a large change — a huge diff floods
+your context and makes the review worse. SIZE IT UP FIRST, then pick a strategy:
 
-`_base` is the baseline (the code before the change); `HEAD` is the baseline plus
-the changes under review. That diff — and only that diff — is your review scope.
-Read the surrounding code for context, but do not go looking for unrelated
-problems elsewhere in the repository.
+1. List the changed files (this is your scope):
+
+       git diff --name-only _base HEAD
+
+2. Measure the size, per file and overall:
+
+       git diff --numstat _base HEAD     # added <tab> deleted <tab> path, per file
+       git diff --shortstat _base HEAD   # one-line total: files, insertions, deletions
+
+3. Read the diff according to size:
+
+   - SMALL overall (roughly < 600 changed lines across a handful of files): read
+     it in one pass —
+
+         git diff _base HEAD
+
+   - LARGE (many files, or more than ~600 changed lines total): review ONE FILE
+     AT A TIME so no single command floods your context. For each path from
+     step 1 —
+
+         git diff _base HEAD -- <path>
+
+     Review that file fully before moving to the next. You may skim or
+     deprioritize obviously low-risk bulk files (generated code, lockfiles,
+     vendored dependencies, large fixtures/snapshots) and spend your attention on
+     hand-written source.
+
+   - A SINGLE VERY LARGE file (roughly > 1500 changed lines): do not load its
+     whole diff at once. Inspect it in sections — view the diff for a line range,
+     or open the file around each changed hunk — and review the substantive
+     changes rather than every mechanical line.
+
+Whichever strategy you use, review every changed file in scope, and fix/report
+issues exactly as described below.
 
 ## How to fix
 
