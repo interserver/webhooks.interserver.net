@@ -2620,11 +2620,109 @@ function prepareOpencodeCommand(string $jobId, ?string $promptText = null): arra
     return ['cmd' => $cmd, 'promptFile' => $promptFile];
 }
 
+/**
+ * Scrape the opencode session id out of raw `--format json` NDJSON so a session
+ * that leaked a tool call can be RESUMED (opencode run -s <id>) instead of
+ * restarted from scratch. Pure and network-free.
+ *
+ * Prefers an explicit JSON key ("sessionID" / "session_id" / "sessionId");
+ * otherwise falls back to a bare `ses_...` token. Returns '' when nothing is
+ * found (the caller then resumes with -c, i.e. "continue the last session").
+ */
+function extractOpencodeSessionId(string $rawOutput): string
+{
+    if ($rawOutput === '') {
+        return '';
+    }
+    if (preg_match('/"session(?:ID|_id|Id)"\s*:\s*"([^"]+)"/', $rawOutput, $m)) {
+        return $m[1];
+    }
+    if (preg_match('/\bses_[A-Za-z0-9]{6,}\b/', $rawOutput, $m)) {
+        return $m[0];
+    }
+    return '';
+}
+
+/**
+ * The continuation instruction sent when RESUMING a leaked session. The review
+ * work (and any in-place fixes) is already done on disk, so this asks the model
+ * to emit ONLY the final report and to call no further tools — which both
+ * salvages the completed review and avoids re-triggering the same tool-call
+ * leak. Overridable via OPENCODE_RESUME_NUDGE.
+ */
+function getResumeNudge(): string
+{
+    $override = getenv('OPENCODE_RESUME_NUDGE');
+    if (is_string($override) && trim($override) !== '') {
+        return $override;
+    }
+    return <<<'NUDGE'
+Your previous turn ended with leaked/unparsed tool-call markup (for example a
+todowrite or bash call emitted as plain text) INSTEAD of finishing the review.
+The review work and any code fixes are already complete on disk.
+
+Do NOT call any tools now — no todowrite, no bash, no read, no edit, nothing.
+Output ONLY the final code-review report immediately, in the EXACT required
+format:
+
+#### <emoji> <title> — <path>:<line>
+<a single FIXED or FLAGGED paragraph describing the issue>
+
+Repeat that block for every issue. Any fix you already applied on disk MUST be
+reported as FIXED. End with exactly one line:
+
+Fixed N of M issues.
+NUDGE;
+}
+
+/**
+ * Build the opencode command that RESUMES an existing review session to finish
+ * the report after a tool-call leak, plus the nudge file it reads.
+ *
+ *   -s <id>  continue a SPECIFIC session (used when a session id was scraped)
+ *   -c       continue the LAST session (fallback when no id was found)
+ *
+ * The nudge is passed via `$(cat FILE)` for the same shell-quoting safety as
+ * prepareOpencodeCommand, and `--format json` is kept so the subagent-reporter
+ * plugin and the NDJSON parsers keep working on the resumed turn.
+ *
+ * @return array{cmd: string, promptFile: string}
+ */
+function buildOpencodeResumeCommand(string $jobId, string $sessionId): array
+{
+    $promptFile = '/tmp/opencode-resume-' . $jobId . '.txt';
+    file_put_contents($promptFile, getResumeNudge());
+    $resume = $sessionId !== '' ? '-s ' . escapeshellarg($sessionId) : '-c';
+    $cmd = sprintf('opencode run %s "$(cat %s)" --format json', $resume, escapeshellarg($promptFile));
+    return ['cmd' => $cmd, 'promptFile' => $promptFile];
+}
+
+/**
+ * Pick the opencode command for a given retry attempt.
+ *
+ * Attempt 1 always runs the full review prompt. Later attempts RESUME the prior
+ * session with the short finish-the-report nudge — UNLESS a previous resume
+ * produced no output ($forceFresh), in which case we fall back to one fresh
+ * full-prompt run so an unresumable session can't spin in an empty loop.
+ *
+ * Pure aside from writing the prompt/nudge temp file (like prepareOpencodeCommand),
+ * so tests can assert the per-attempt selection without invoking opencode.
+ *
+ * @return array{cmd: string, promptFile: string, mode: string}
+ */
+function selectOpencodeAttemptCommand(string $jobId, int $attempt, string $sessionId, bool $forceFresh = false, ?string $promptText = null): array
+{
+    if ($attempt <= 1 || $forceFresh) {
+        $prep = prepareOpencodeCommand($jobId, $promptText);
+        return ['cmd' => $prep['cmd'], 'promptFile' => $prep['promptFile'], 'mode' => 'fresh'];
+    }
+    $resume = buildOpencodeResumeCommand($jobId, $sessionId);
+    return ['cmd' => $resume['cmd'], 'promptFile' => $resume['promptFile'], 'mode' => 'resume'];
+}
+
 function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bool $showAgent = false, int $timeout = 1800, ?string $promptText = null): string
 {
     global $running, $verbose, $logFile;
-
-    ['cmd' => $opencodeCmd, 'promptFile' => $promptFile] = prepareOpencodeCommand($jobId, $promptText);
 
     // Log what changed — kept OUT of the analyzed command output so diff
     // content can never be mistaken for review findings by the parsers
@@ -2641,16 +2739,30 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bo
 
     // The model (MiniMax-M2 via SGLang) occasionally emits its tool-call markup
     // as plain text and then ends the turn mid-review — a server-side tool-call
-    // parse leak. When we detect that, re-run the review (the PR baseline is the
-    // committed snapshot, so `git diff _base HEAD` is stable across attempts and
-    // in-place fixes converge idempotently). Tunable via OPENCODE_MAX_ATTEMPTS
-    // (default 3, i.e. 2 retries).
+    // parse leak. In practice this happens AT THE END, after the real review is
+    // done, on a bookkeeping call (e.g. todowrite). Restarting from scratch
+    // would throw the finished review away AND, because the agent already edited
+    // files on disk, the fresh pass would no longer re-find the now-fixed bug.
+    // So on a detected leak we RESUME the same opencode session (opencode run -s
+    // <id> / -c) with a short nudge to just finish the report and call no more
+    // tools — salvaging the work and avoiding a re-trigger. Tunable via
+    // OPENCODE_MAX_ATTEMPTS (default 3, i.e. 2 retries).
     $maxAttempts = max(1, (int)(getenv('OPENCODE_MAX_ATTEMPTS') ?: 3));
     $result = '';
+    $sessionId = '';
+    $forceFresh = false;      // set when a resume produced nothing → fall back to a fresh run
+    $tempFiles = [];          // every prompt/nudge temp file we wrote, unlinked in finally
 
     try {
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
-            $suffix = ($stream ? ' [streaming]' : '') . ($attempt > 1 ? " (attempt {$attempt}/{$maxAttempts})" : '');
+            $selection = selectOpencodeAttemptCommand($jobId, $attempt, $sessionId, $forceFresh, $promptText);
+            $opencodeCmd = $selection['cmd'];
+            $mode = $selection['mode'];
+            $tempFiles[$selection['promptFile']] = true;
+            $forceFresh = false; // consumed for this attempt
+
+            $modeSuffix = ($attempt > 1 && $mode === 'resume') ? ' [resume]' : '';
+            $suffix = ($stream ? ' [streaming]' : '') . ($attempt > 1 ? " (attempt {$attempt}/{$maxAttempts}{$modeSuffix})" : '');
             verbose_log("runOpencodeAnalysis: executing analysis in {$dir}{$suffix}", 3);
 
             $run = runStreamedCommand($opencodeCmd, $dir, $timeout, $stream);
@@ -2662,7 +2774,36 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bo
             if ($run['stderr'] !== '') {
                 verbose_raw("opencode_stderr", $run['stderr']);
             }
+
+            // A resume that produced nothing means the session couldn't be
+            // continued (not found / resume failed). Rather than overwrite the
+            // salvageable partial with '' or loop resuming an unresumable
+            // session forever, fall back to ONE fresh full-prompt run.
+            if ($mode === 'resume' && trim($run['output']) === '') {
+                if ($attempt < $maxAttempts) {
+                    verbose_log("runOpencodeAnalysis: resume produced no output (session not found?); falling back to a fresh full-prompt run (" . ($attempt + 1) . "/{$maxAttempts})", 1);
+                    $forceFresh = true;
+                    usleep(500000); // brief backoff before retry
+                    if (function_exists('pcntl_signal_dispatch')) {
+                        pcntl_signal_dispatch();
+                    }
+                    // @phpstan-ignore-next-line — $running is mutated by the async signal handler
+                    if (!$running) {
+                        return '';
+                    }
+                    continue;
+                }
+                verbose_log("runOpencodeAnalysis: resume produced no output on the final attempt; using best-effort partial", 1);
+                break;
+            }
+
             $result = $run['output'];
+
+            // Capture the session id from the first attempt that exposes one so
+            // a later leak resumes the SAME session (falls back to -c otherwise).
+            if ($sessionId === '') {
+                $sessionId = extractOpencodeSessionId($result);
+            }
 
             if ($run['timedOut']) {
                 // A timeout is not a parse leak — keep whatever partial we have
@@ -2671,7 +2812,8 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bo
             }
 
             if (looksLikeLeakedToolCall($result) && $attempt < $maxAttempts) {
-                verbose_log("runOpencodeAnalysis: output ended on leaked tool-call markup (model/SGLang tool-parse leak); retrying fresh (" . ($attempt + 1) . "/{$maxAttempts})", 1);
+                $target = $sessionId !== '' ? "session {$sessionId}" : 'the last session (-c)';
+                verbose_log("runOpencodeAnalysis: output ended on leaked tool-call markup (model/SGLang tool-parse leak); resuming {$target} to finish the report (" . ($attempt + 1) . "/{$maxAttempts})", 1);
                 usleep(500000); // brief backoff before retry
                 if (function_exists('pcntl_signal_dispatch')) {
                     pcntl_signal_dispatch();
@@ -2689,7 +2831,9 @@ function runOpencodeAnalysis(string $dir, string $jobId, string $cmdTemplate, bo
             break;
         }
     } finally {
-        @unlink($promptFile);
+        foreach (array_keys($tempFiles) as $f) {
+            @unlink($f);
+        }
     }
 
     verbose_log("runOpencodeAnalysis: completed, output length=" . strlen($result), 3);
