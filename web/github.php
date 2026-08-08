@@ -158,11 +158,6 @@ try {
     $action = $Payload['action'] ?? null;
     $room = pickRoom($RepositoryName);
     $dedupKey = buildDedupKey($EventType, $RepositoryName, $Payload);
-    $logLevel = strtolower((string)(getenv('LOG_LEVEL') ?: 'info'));
-    if ($logLevel === 'debug') {
-        github_log_event($EventType, $RepositoryName, $action, $Payload['sender']['login'] ?? 'unknown', ['payload_size' => strlen(json_encode($Payload))]);
-    }
-
     // The bot decides whether each event is interesting enough to actually
     // post to Teams (see server/queue/filters.js). We just queue everything
     // here so the bot has both the prebuilt text AND the raw payload for
@@ -188,6 +183,22 @@ try {
         // Builder may not handle every event; carry an empty text and let
         // the bot decide what to do with the raw data.
         $text = '';
+    }
+
+    $logLevel = strtolower((string)(getenv('LOG_LEVEL') ?: 'info'));
+    $envelopeForLog = [
+        'room' => $room,
+        'text' => $text,
+        'dedup_key' => $dedupKey,
+        'level' => 'info',
+        'event_type' => $EventType,
+        'action' => $action,
+        'repo' => $RepositoryName,
+        'data' => $Payload,
+        'source' => 'webhooks/github.php',
+    ];
+    if ($logLevel === 'debug') {
+        github_log_event($EventType, $RepositoryName, $action, $Payload['sender']['login'] ?? 'unknown', $envelopeForLog);
     }
 
     NotificationQueue::enqueueMessage($text, $room, [
