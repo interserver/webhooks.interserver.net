@@ -293,7 +293,7 @@ function verbose_raw(string $label, string $output): void
 }
 
 /**
- * Render and log markdown with ANSI colors using candy-shine (only at -vvvv level)
+ * Render and log markdown with ANSI colors using sugar-markdown (only at -vvvv level)
  */
 function verbose_markdown(string $label, string $markdown): void
 {
@@ -303,7 +303,7 @@ function verbose_markdown(string $label, string $markdown): void
         $line = outputPrefix() . "github-code-review: {$prefix} {$label}";
         error_log($line);
         try {
-            $colored = \SugarCraft\Shine\Renderer::renderMarkdown($markdown);
+            $colored = \SugarCraft\Markdown\Renderer::renderMarkdown($markdown);
             error_log($colored);
         } catch (\Throwable $e) {
             // Fallback to plain text if rendering fails
@@ -361,7 +361,7 @@ function parseOpencodeEventLine(string $line, int $verbose = 4): ?string
             // Colorize markdown at verbosity 4
             if ($verbose >= 4) {
                 try {
-                    return \SugarCraft\Shine\Renderer::renderMarkdown($text);
+                    return \SugarCraft\Markdown\Renderer::renderMarkdown($text);
                 } catch (\Throwable $e) {
                     return $text;
                 }

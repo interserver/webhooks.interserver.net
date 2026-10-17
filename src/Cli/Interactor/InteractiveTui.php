@@ -10,18 +10,18 @@ use SugarCraft\Table\Table;
 use SugarCraft\Table\Column;
 use SugarCraft\Table\Row;
 use SugarCraft\Table\RowData;
-use SugarCraft\Dash\Layout\VStack;
-use SugarCraft\Dash\Layout\Panel;
-use SugarCraft\Dash\Components\StatusBar\StatusBar;
-use SugarCraft\Dash\Layout\HAlign;
+use SugarCraft\Dashboard\Layout\VStack;
+use SugarCraft\Dashboard\Layout\Panel;
+use SugarCraft\Dashboard\Components\StatusBar\StatusBar;
+use SugarCraft\Dashboard\Layout\HAlign;
 use SugarCraft\Toast\Toast;
 use SugarCraft\Core\Util\Color;
-use SugarCraft\Sprinkles\Style;
-use SugarCraft\Sprinkles\Border;
+use SugarCraft\Style\Style;
+use SugarCraft\Style\Border;
 use SugarCraft\Forms\ItemList\ItemList;
 use SugarCraft\Forms\ItemList\StringItem;
-use SugarCraft\Dash\Layout\Frame;
-use SugarCraft\Dash\Foundation\Item;
+use SugarCraft\Dashboard\Layout\Frame;
+use SugarCraft\Dashboard\Foundation\Item;
 
 /**
  * Interactive TUI for browsing GitHub activity with arrow key navigation.
@@ -37,13 +37,13 @@ use SugarCraft\Dash\Foundation\Item;
  * - Load more pagination (press l) for single repo queries
  *
  * Uses SugarCraft libraries for input handling and rendering:
- * - candy-input: EscapeDecoder for keyboard input
+ * - sugar-input: EscapeDecoder for keyboard input
  * - sugar-table: Interactive table with sorting, filtering, pagination
- * - sugar-dash: Dashboard layout (VStack, HStack, Panel, StatusBar, Frame)
- * - sugar-sprinkles: Style and Border for styled boxes
- * - candy-forms: ItemList for scrollable lists
+ * - sugar-dashboard: Dashboard layout (VStack, HStack, Panel, StatusBar, Frame)
+ * - sugar-style: Style and Border for styled boxes
+ * - sugar-forms: ItemList for scrollable lists
  * - sugar-toast: Toast notifications
- * - sugar-bits/Spinner: Loading spinner
+ * - sugar-widgets/Spinner: Loading spinner
  */
 final class InteractiveTui
 {
@@ -117,7 +117,7 @@ final class InteractiveTui
     private function getTerminalSize(): array
     {
         try {
-            // @phpstan-ignore-next-line Tty is from candy-core external package
+            // @phpstan-ignore-next-line Tty is from sugar-core external package
             $size = (new Tty(STDOUT))->size();
             if ($size['cols'] > 0 && $size['rows'] > 0) {
                 return $size;
@@ -234,7 +234,7 @@ final class InteractiveTui
     }
 
     /**
-     * Handle input using EscapeDecoder from candy-input.
+     * Handle input using EscapeDecoder from sugar-input.
      *
      * Uses fread() with a buffer to capture multi-byte escape sequences
      * (arrow keys, function keys, etc.). EscapeDecoder handles partial sequences
@@ -1442,7 +1442,7 @@ final class InteractiveTui
  * Simple content wrapper that implements Item for Frame.
  * Frame handles all bounds calculation internally.
  */
-final class RawContent implements \SugarCraft\Dash\Foundation\Item, \SugarCraft\Dash\Foundation\Sizer
+final class RawContent implements \SugarCraft\Dashboard\Foundation\Item, \SugarCraft\Dashboard\Foundation\Sizer
 {
     public function __construct(
         private readonly string $content,
@@ -1479,7 +1479,7 @@ final class RawContent implements \SugarCraft\Dash\Foundation\Item, \SugarCraft\
         return implode("\n", array_slice($adjusted, 0, $this->height));
     }
 
-    public function setSize(int $width, int $height): \SugarCraft\Dash\Foundation\Sizer
+    public function setSize(int $width, int $height): \SugarCraft\Dashboard\Foundation\Sizer
     {
         return new self($this->content, $width, $height);
     }
