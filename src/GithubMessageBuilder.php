@@ -3,6 +3,14 @@ declare(strict_types=1);
 
 class GithubMessageBuilder
 {
+    private const BODY_EXCERPT_CHARS = 500;
+
+    /**
+     * Dependabot folds these into <details> blocks; they only expand on the
+     * "Bumps x from a to b" line, so they are dropped from the excerpt.
+     */
+    private const DROPPED_DETAILS_SUMMARIES = ['Release notes', 'Changelog', 'Commits', 'Dependabot commands and options'];
+
     private string $EventType;
     private array $Message;
     private string $RepositoryName;
@@ -127,7 +135,7 @@ class GithubMessageBuilder
                  . "in [{$RepositoryName}](https://github.com/{$RepositoryName}).";
 
         if (!empty($Issue['labels'])) {
-            $Labels = array_map(fn($l) => "`{$l['name']}`", $Issue['labels']);
+            $Labels = array_map(fn ($l) => "**{$l['name']}**", $Issue['labels']);
             $ChatMsg .= " " . implode(' ', $Labels);
         }
 
@@ -140,9 +148,9 @@ class GithubMessageBuilder
             $ChatMsg .= " _(changed: " . implode(', ', $Changed) . ")_";
         }
 
-        if (!empty($Issue['body'])) {
-            $body = self::stripImages($Issue['body']);
-            $ChatMsg .= "\n\n> " . substr($body, 0, 500) . (strlen($body) > 500 ? "…" : "");
+        $Excerpt = self::bodyExcerpt($Issue['body'] ?? '');
+        if ($Excerpt !== '') {
+            $ChatMsg .= "\n\n> " . $Excerpt;
         }
 
         return $ChatMsg;
@@ -162,7 +170,7 @@ class GithubMessageBuilder
                  . "in [{$RepositoryName}](https://github.com/{$RepositoryName})";
 
         if ($HeadBranch && $BaseBranch) {
-            $ChatMsg .= " (`{$HeadBranch}` → `{$BaseBranch}`)";
+            $ChatMsg .= " (**{$HeadBranch}** → **{$BaseBranch}**)";
         }
         $ChatMsg .= ".";
 
@@ -190,9 +198,9 @@ class GithubMessageBuilder
             }
         }
 
-        if (!empty($PR['body'])) {
-            $body = self::stripImages($PR['body']);
-            $ChatMsg .= "\n\n> " . substr($body, 0, 500) . (strlen($body) > 500 ? "…" : "");
+        $Excerpt = self::bodyExcerpt($PR['body'] ?? '');
+        if ($Excerpt !== '') {
+            $ChatMsg .= "\n\n> " . $Excerpt;
         }
 
         return $ChatMsg;
@@ -231,7 +239,7 @@ class GithubMessageBuilder
         $ChatMsg = "📦 {$Alias} pushed {$CommitCount} "
                  . ($CommitCount === 1 ? "commit" : "commits")
                  . " to [{$RepositoryName}](https://github.com/{$RepositoryName}) "
-                 . "[`{$Branch}`](https://github.com/{$RepositoryName}/tree/{$Branch})";
+                 . "[**{$Branch}**](https://github.com/{$RepositoryName}/tree/{$Branch})";
 
         if (!empty($Message['compare'])) {
             $ChatMsg .= " ([compare]({$Message['compare']}))";
@@ -257,7 +265,7 @@ class GithubMessageBuilder
         $ChatMsg = "{$Emoji} Check **{$Name}** {$Status} "
                  . "for [{$RepositoryName}](https://github.com/{$RepositoryName})";
         if ($Branch) {
-            $ChatMsg .= " on `{$Branch}`";
+            $ChatMsg .= " on **{$Branch}**";
         }
         $ChatMsg .= " ([details]({$Url}))";
         if ($CommitMsg) {
@@ -279,7 +287,7 @@ class GithubMessageBuilder
         $ChatMsg = "{$Emoji} Workflow **{$WorkflowName}** {$Status} "
                  . "for [{$RepositoryName}](https://github.com/{$RepositoryName})";
         if ($Branch) {
-            $ChatMsg .= " on `{$Branch}`";
+            $ChatMsg .= " on **{$Branch}**";
         }
         $ChatMsg .= " ([view run]({$Url}))";
 
@@ -329,13 +337,88 @@ class GithubMessageBuilder
              . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
     }
 
-    private static function stripImages(string $text): string
+    /**
+     * Compact Markdown excerpt of an issue/PR body for the chat message.
+     * Returns '' when nothing readable is left after cleaning.
+     */
+    private static function bodyExcerpt(string $Body): string
     {
-        // Remove markdown images: ![alt](url)
-        $text = preg_replace('/!\[.*?\]\(.*?\)/', '', $text);
-        // Remove HTML <img> tags and their contents
-        $text = preg_replace('/<img[^>]*>.*?<\/img>/', '', $text);
-        $text = preg_replace('/<img[^>]*\/>/', '', $text);
-        return trim($text);
+        $Text = self::cleanBody($Body);
+        if (mb_strlen($Text) <= self::BODY_EXCERPT_CHARS) {
+            return $Text;
+        }
+        $Text = mb_substr($Text, 0, self::BODY_EXCERPT_CHARS);
+        // Don't leave a half-written link, code span or bold run at the cut —
+        // Teams shows the raw markers and can mis-render whatever follows.
+        $Text = (string)preg_replace('/!?\[[^\]]*(?:\]\([^)]*)?$/u', '', $Text);
+        foreach (['```', '`', '**'] as $Marker) {
+            if (substr_count($Text, $Marker) % 2 === 1) {
+                $Text = substr($Text, 0, (int)strrpos($Text, $Marker));
+            }
+        }
+        return rtrim($Text) . '…';
+    }
+
+    /**
+     * Reduce a GitHub issue/PR body to plain Markdown that Teams renders cleanly.
+     *
+     * Bot-authored bodies (Dependabot, Mend) are mostly HTML scaffolding.
+     * Teams shows an <img> as an image, and an HTML block left open by the
+     * excerpt cut swallows every following line as raw text — including the
+     * bullets the bot later appends under the message. So drop images,
+     * comments and boilerplate footers, turn the HTML that carries meaning
+     * into Markdown, and strip the rest.
+     */
+    private static function cleanBody(string $Text): string
+    {
+        $Text = str_replace(["\r\n", "\r"], "\n", $Text);
+        $Text = (string)preg_replace('/<!--.*?-->/s', '', $Text);
+
+        // Bot bodies put their boilerplate (Dependabot's command list, Mend's
+        // promo) after the first horizontal rule.
+        $Parts = preg_split('/\n[ \t]*\n[ \t]*(?:-{3,}|\*{3,}|_{3,})[ \t]*(?:\n|$)/', $Text, 2);
+        if ($Parts !== false && trim($Parts[0]) !== '') {
+            $Text = $Parts[0];
+        }
+
+        $Folds = implode('|', array_map(fn ($s) => preg_quote($s, '/'), self::DROPPED_DETAILS_SUMMARIES));
+        $Text = (string)preg_replace('/<details>\s*<summary>\s*(?:' . $Folds . ')\s*<\/summary>.*?<\/details>/is', '', $Text);
+
+        // Images — linked badges first so no empty [](…) link is left behind.
+        $Text = (string)preg_replace('/\[!\[[^\]]*\]\([^)]*\)\]\([^)]*\)/', '', $Text);
+        $Text = (string)preg_replace('/!\[[^\]]*\]\([^)]*\)/', '', $Text);
+        $Text = (string)preg_replace('/<img\b[^>]*>(?:\s*<\/img>)?/i', '', $Text);
+
+        // Markdown comments ([//]: # (dependabot-automerge-start)) and boilerplate.
+        $Text = (string)preg_replace('/^\[\/\/\]: #.*$/m', '', $Text);
+        $Text = (string)preg_replace('/^Dependabot will resolve any conflicts with this PR.*$/m', '', $Text);
+
+        // HTML that carries meaning → Markdown.
+        $Wrap = fn (string $Marker) => function (array $m) use ($Marker): string {
+            $Inner = trim($m[2]);
+            return $Inner === '' ? '' : "{$Marker}{$Inner}{$Marker}";
+        };
+        $Text = (string)preg_replace_callback('/<(b|strong)\b[^>]*>(.*?)<\/\1>/is', $Wrap('**'), $Text);
+        $Text = (string)preg_replace_callback('/<(i|em)\b[^>]*>(.*?)<\/\1>/is', $Wrap('_'), $Text);
+        $Text = (string)preg_replace_callback('/<(code)\b[^>]*>(.*?)<\/\1>/is', $Wrap('`'), $Text);
+        $Text = (string)preg_replace_callback('/<a\b[^>]*?\bhref\s*=\s*["\']?([^"\'\s>]+)["\']?[^>]*>(.*?)<\/a>/is', function (array $m): string {
+            $Label = trim(strip_tags($m[2]));
+            return $Label === '' ? '' : "[{$Label}]({$m[1]})";
+        }, $Text);
+        $Text = (string)preg_replace('/<li\b[^>]*>/i', "\n- ", $Text);
+        $Text = (string)preg_replace('/<br\s*\/?>/i', "\n", $Text);
+        // Block tags become paragraph breaks; other known tags are dropped.
+        // Only named tags are touched so prose like "<dependency name>" survives.
+        $Text = (string)preg_replace('/<\/?(?:p|div|details|summary|blockquote|h[1-6]|ul|ol|table|thead|tbody|tr|pre|hr)\b[^>]*>/i', "\n\n", $Text);
+        $Text = (string)preg_replace('/<\/?(?:li|span|td|th|sup|sub|kbd|picture|source|a|b|strong|i|em|code)\b[^>]*>/i', '', $Text);
+        $Text = (string)preg_replace('/\[\s*\]\([^)]*\)/', '', $Text);
+
+        // Indentation only matters for nested list items.
+        $Lines = array_map(function (string $Line): string {
+            $Line = rtrim($Line);
+            return preg_match('/^\s*(?:[-*+]|\d+\.)\s/', $Line) ? $Line : ltrim($Line);
+        }, explode("\n", $Text));
+        $Text = (string)preg_replace("/\n{3,}/", "\n\n", implode("\n", $Lines));
+        return trim($Text);
     }
 }

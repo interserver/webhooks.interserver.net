@@ -183,7 +183,54 @@ class GithubMessageBuilderTest extends TestCase
         $Builder = new GithubMessageBuilder('issues', $payload);
         $text = $Builder->build()['text'];
 
-        $this->assertStringContainsString('`bug`', $text);
+        $this->assertStringContainsString('**bug**', $text);
+        $this->assertStringNotContainsString('`bug`', $text);
+    }
+
+    public function testIssueBodyStripsUnclosedImgAndConvertsHtml(): void
+    {
+        // Mend writes <img …> without a closing slash; the old regex missed it.
+        $body = "## CVE-2020-36184 - High Severity Vulnerability\n"
+              . "<details><summary><img src='https://whitesource-resources.whitesourcesoftware.com/vulnerability_details.png' width=19 height=20> "
+              . "Vulnerable Libraries - <b>jackson-databind-2.9.8.jar</b>, <b>jackson-databind-2.9.4.jar</b></summary>\n<p>\n\n"
+              . "<details><summary><b>jackson-databind-2.9.8.jar</b></summary>\n\n<p></p>\n"
+              . "<p>Library home page: <a href=\"https://github.com/FasterXML/jackson\">https://github.com/FasterXML/jackson</a></p>";
+        $payload = $this->makeIssuePayload('closed', 730, 'CVE', 'detain', 'org/repo', 'completed', ['Mend: dependency security vulnerability'], $body);
+
+        $text = (new GithubMessageBuilder('issues', $payload))->build()['text'];
+
+        $this->assertStringNotContainsString('<img', $text);
+        $this->assertStringNotContainsString('<details>', $text);
+        $this->assertStringNotContainsString('<b>', $text);
+        $this->assertStringContainsString('**Mend: dependency security vulnerability**', $text);
+        $this->assertStringContainsString(
+            "> ## CVE-2020-36184 - High Severity Vulnerability\n\n"
+            . "Vulnerable Libraries - **jackson-databind-2.9.8.jar**, **jackson-databind-2.9.4.jar**\n\n"
+            . "**jackson-databind-2.9.8.jar**\n\n"
+            . "Library home page: [https://github.com/FasterXML/jackson](https://github.com/FasterXML/jackson)",
+            $text
+        );
+    }
+
+    public function testIssueBodyTruncationDoesNotLeaveDanglingMarkup(): void
+    {
+        $body = str_repeat('a', 480) . ' [a link that runs past the cut](https://example.com/' . str_repeat('p', 50) . ')';
+        $payload = $this->makeIssuePayload('opened', 1, 'Title', 'alice', 'org/repo', null, [], $body);
+        $text = (new GithubMessageBuilder('issues', $payload))->build()['text'];
+        $this->assertStringEndsWith(str_repeat('a', 480) . '…', $text);
+
+        $body = str_repeat('b', 495) . ' **bold that runs past the cut**';
+        $payload = $this->makeIssuePayload('opened', 1, 'Title', 'alice', 'org/repo', null, [], $body);
+        $text = (new GithubMessageBuilder('issues', $payload))->build()['text'];
+        $this->assertStringEndsWith(str_repeat('b', 495) . '…', $text);
+    }
+
+    public function testIssueBodyTruncationIsMultibyteSafe(): void
+    {
+        $payload = $this->makeIssuePayload('opened', 1, 'Title', 'alice', 'org/repo', null, [], str_repeat('é', 600));
+        $text = (new GithubMessageBuilder('issues', $payload))->build()['text'];
+        $this->assertTrue(mb_check_encoding($text, 'UTF-8'));
+        $this->assertStringEndsWith(str_repeat('é', 500) . '…', $text);
     }
 
     public function testIssueBodyTruncatedAt500Chars(): void
@@ -210,7 +257,23 @@ class GithubMessageBuilderTest extends TestCase
         $this->assertStringContainsString('🔀', $text);
         $this->assertStringContainsString('**opened**', $text);
         $this->assertStringContainsString('#7', $text);
-        $this->assertStringContainsString('`feature` → `main`', $text);
+        $this->assertStringContainsString('(**feature** → **main**)', $text);
+    }
+
+    public function testPullRequestDependabotSecurityBodyReducedToBumpsLine(): void
+    {
+        // Real body from interserver/mailbaby-api-samples#1292.
+        $payload = $this->makePRPayload('closed', 1292, 'Bump resteasy', 'detain', 'org/repo', 'dependabot/maven/x', 'master', true);
+        $payload['pull_request']['body'] = "Bumps org.jboss.resteasy:resteasy-multipart-provider from 4.5.7.Final to 4.7.8.Final.\n\n\n"
+            . "[![Dependabot compatibility score](https://dependabot-badges.githubapp.com/badges/compatibility_score?dependency-name=x)](https://docs.github.com/en/github/managing-security-vulnerabilities/about-dependabot-security-updates#about-compatibility-scores)\n\n"
+            . "Dependabot will resolve any conflicts with this PR as long as you don't alter it yourself. You can also trigger a rebase manually by commenting `@dependabot rebase`.\n\n"
+            . "[//]: # (dependabot-automerge-start)\n[//]: # (dependabot-automerge-end)\n\n---\n\n"
+            . "<details>\n<summary>Dependabot commands and options</summary>\n<br />\n\nYou can trigger Dependabot actions by commenting on this PR:\n"
+            . "- `@dependabot rebase` will rebase this PR\n\n</details>";
+
+        $text = (new GithubMessageBuilder('pull_request', $payload))->build()['text'];
+
+        $this->assertStringEndsWith("✅ Merged. _(1 commit, +10/-2, 1 file)_\n\n> Bumps org.jboss.resteasy:resteasy-multipart-provider from 4.5.7.Final to 4.7.8.Final.", $text);
     }
 
     public function testPullRequestMergedShowsCheckmark(): void
