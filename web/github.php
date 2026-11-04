@@ -11,6 +11,12 @@ declare(strict_types=1);
  * Test seam: the PHPUnit helpers suite loads this file only for its pure
  * functions (buildDedupKey, filterWebhookPayload, ...). Skip the response
  * headers, the request pipeline and the gitignored src/config.php require.
+ *
+ * Caveat: the early return also skips top-level `const` definitions below
+ * the guard (e.g. GITHUB_LOG_DIR, used by github_log_event ~:386), so they
+ * are NOT defined in helpers-only loads. Future tests calling
+ * github_log_event must define the constants they need themselves or hoist
+ * the const above the guard.
  */
 if (defined('GITHUB_WEBHOOK_HELPERS_ONLY')) {
     return;
