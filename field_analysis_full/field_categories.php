@@ -644,6 +644,77 @@ return [
             'data.release.assets[].download_count',
         ],
 
+        'registry_package' => [
+            'data.action',
+
+            // Package identity
+            'data.registry_package.id',
+            'data.registry_package.name',                    // e.g. "@detain/sugarcraft"
+            'data.registry_package.package_type',            // Npm, Maven, Docker, ...
+
+            // URLs
+            'data.registry_package.html_url',               // Link to the package page
+            'data.registry_package.url',
+            'data.registry_package.registry_url',
+
+            // Content
+            'data.registry_package.description',
+
+            // Published version
+            'data.registry_package.package_version.id',
+            'data.registry_package.package_version.name',
+            'data.registry_package.package_version.version',
+            'data.registry_package.package_version.summary',
+
+            // Author
+            'data.registry_package.user.login',
+            'data.registry_package.user.html_url',
+            'data.registry_package.author.login',
+            'data.registry_package.author.html_url',
+
+            // Timestamps
+            'data.registry_package.created_at',
+
+            // NOTE: package_version.package_files[] intentionally omitted -
+            // artifact file lists can be long and carry no notification value.
+        ],
+
+        'package' => [
+            'data.action',
+
+            // Legacy event name (pre-2023); same object under data.package.
+
+            // Package identity
+            'data.package.id',
+            'data.package.name',
+            'data.package.package_type',
+
+            // URLs
+            'data.package.html_url',
+            'data.package.url',
+            'data.package.registry_url',
+
+            // Content
+            'data.package.description',
+
+            // Published version
+            'data.package.package_version.id',
+            'data.package.package_version.name',
+            'data.package.package_version.version',
+            'data.package.package_version.summary',
+
+            // Author
+            'data.package.user.login',
+            'data.package.user.html_url',
+            'data.package.author.login',
+            'data.package.author.html_url',
+
+            // Timestamps
+            'data.package.created_at',
+
+            // NOTE: No package_files - see registry_package above.
+        ],
+
         'status' => [
             // SHA (CORRELATION)
             'data.sha',

@@ -1,0 +1,1 @@
+📦 detain updated [npm package **@detain/sugarcraft**](https://github.com/detain/sugarcraft/packages/8123456) on [**detain/sugarcraft**](https://github.com/detain/sugarcraft).

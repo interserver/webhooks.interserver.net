@@ -21,7 +21,7 @@ php scripts/github-code-review.php
 - **Logs**: `log/Y/m/d/` — JSON files named `His_eventtype_action_user_repo.json` (verbosity controlled by `LOG_LEVEL`)
 - **Code review**: `src/CodeReviewQueue.php` enqueues push events for async review by `scripts/github-code-review.php`; `scripts/github-code-review-list.php` lists queued review jobs
 - **Field analysis**: `scripts/analyze_fields.php`, `scripts/filter_webhook.php`, `scripts/filter_webhook_batch.php` produce reports under `field_analysis_full/` (per-group JSON, `frequency_matrix.json`, `FIELD_CATEGORIZATION.md`)
-- **Tests**: `tests/` via `phpunit.xml` · fixtures in `tests/events/{event_name}/`
+- **Tests**: `tests/` via `phpunit.xml` · fixtures in `tests/events/{event_name}/` · `tests/GithubPackageWebhookTest.php` loads the pure helpers in `web/github.php` (`buildDedupKey`, `filterWebhookPayload`) by defining `GITHUB_WEBHOOK_HELPERS_ONLY` before `require`
 - **Quality**: `phpstan.neon` · `phpstan-bootstrap.php` · `.php-cs-fixer.dist.php` (PSR2 + PHP74Migration)
 - **CI**: `.github/` — GitHub Actions workflows (`.github/workflows/ci.yml`)
 
@@ -105,7 +105,7 @@ $queue->enqueueMessage($room, $Msg['text'], $dedupKey, $EventType, $action, $Rep
 `src/NotificationQueue.php` enqueues a JSON envelope to Redis via `LPUSH` when `NOTIF_QUEUE_ENABLED=true` (default); otherwise it POSTs directly to the Power Automate `fallback_webhook_url`.
 
 - **Envelope keys**: `v`, `id` (uuid), `ts`, `expires_at`, `room`, `type`, `message`, `card`, `extra.dedup_key`, `extra.event_type`, `extra.action`, `extra.repo`, `extra.data`, `extra.source`, `fallback_webhook_url`
-- **Dedup keys** (per event): `github:push:{repo}:{branch}` · `github:issue:{repo}:{number}` · `github:pr:{repo}:{number}` · `github:checkrun:{repo}:{sha7}` · `github:check:{repo}:{sha7}` · `github:wf:{repo}:{branch}:{name}` · `github:wfjob:{repo}:{branch}:{jobName}` · `github:wiki:{repo}` · `github:status:{repo}:{sha7}` · `github:{event}:{repo}` for `star`/`watch`/`fork`/`ping`
+- **Dedup keys** (per event): `github:push:{repo}:{branch}` · `github:issue:{repo}:{number}` · `github:pr:{repo}:{number}` · `github:checkrun:{repo}:{sha7}` · `github:check:{repo}:{sha7}` · `github:wf:{repo}:{branch}:{name}` · `github:wfjob:{repo}:{branch}:{jobName}` · `github:wiki:{repo}` · `github:status:{repo}:{sha7}` · `github:package:{repo}:{name}:{version}` for `registry_package`/`package` (version falls back to `latest`) · `github:{event}:{repo}` for `star`/`watch`/`fork`/`ping`
 - **Oversize handling**: when the JSON exceeds 256KB, `extra.data` is stripped first, then the message text is truncated
 - **`getLastStatus()`** returns one of: `queued`, `direct_flag_off`, `direct_no_redis`, `direct_redis_exception`, `direct_oversize`, `failed_no_fallback`
 

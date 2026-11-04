@@ -119,6 +119,9 @@ class GithubMessageBuilder
                 return $this->buildWorkflowText($EventType, $Message, $RepositoryName);
             case 'gollum':
                 return $this->buildGollumText($Message, $RepositoryName, $User);
+            case 'registry_package':
+            case 'package':
+                return $this->buildPackageText($Message, $RepositoryName, $Alias);
             default:
                 return $this->buildDefaultText($EventType, $Message, $RepositoryName, $Alias);
         }
@@ -328,6 +331,33 @@ class GithubMessageBuilder
         }
         return "📝 [{$User}](https://github.com/{$User}) updated the wiki "
              . "on [{$RepositoryName}](https://github.com/{$RepositoryName}).";
+    }
+
+    /**
+     * registry_package is the current event name; package is the legacy one.
+     * Both carry the package object under their own key.
+     */
+    private function buildPackageText(array $Message, string $RepositoryName, string $Alias): string
+    {
+        $Package = $Message['registry_package'] ?? $Message['package'] ?? [];
+        $PackageName = (string)($Package['name'] ?? '');
+        if ($PackageName === '') {
+            return $this->buildDefaultText($this->EventType, $Message, $RepositoryName, $Alias);
+        }
+
+        $Action = (string)($Message['action'] ?? 'published');
+        $Type = strtolower((string)($Package['package_type'] ?? 'package'));
+        $Version = (string)($Package['package_version']['name'] ?? $Package['package_version']['version'] ?? '');
+        $Label = $Version !== '' ? "{$PackageName}@{$Version}" : $PackageName;
+
+        $Subject = "{$Type} package **{$Label}**";
+        $PackageUrl = (string)($Package['html_url'] ?? '');
+        if ($PackageUrl !== '') {
+            $Subject = "[{$Subject}]({$PackageUrl})";
+        }
+
+        return "📦 {$Alias} {$Action} {$Subject} "
+             . "on [**{$RepositoryName}**](https://github.com/{$RepositoryName}).";
     }
 
     private function buildDefaultText(string $EventType, array $Message, string $RepositoryName, string $Alias): string

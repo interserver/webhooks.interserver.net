@@ -1,0 +1,55 @@
+{
+    "action": "updated",
+    "registry_package": {
+        "id": 8123456,
+        "created_at": "2026-11-03T21:40:12Z",
+        "updated_at": "2026-11-04T08:15:00Z",
+        "html_url": "https://github.com/detain/sugarcraft/packages/8123456",
+        "name": "@detain/sugarcraft",
+        "url": "https://api.github.com/packages/8123456",
+        "description": "Shared sugarcraft UI building blocks",
+        "package_type": "Npm",
+        "user": {
+            "login": "detain",
+            "id": 2472,
+            "avatar_url": "https://avatars.githubusercontent.com/u/2472?v=4",
+            "url": "https://api.github.com/users/detain",
+            "html_url": "https://github.com/detain",
+            "type": "User",
+            "site_admin": false
+        },
+        "author": {
+            "login": "detain",
+            "id": 2472,
+            "avatar_url": "https://avatars.githubusercontent.com/u/2472?v=4",
+            "url": "https://api.github.com/users/detain",
+            "html_url": "https://github.com/detain",
+            "type": "User",
+            "site_admin": false
+        }
+    },
+    "repository": {
+        "id": 185882436,
+        "name": "sugarcraft",
+        "full_name": "detain/sugarcraft",
+        "private": false,
+        "owner": {
+            "login": "detain",
+            "id": 2472,
+            "avatar_url": "https://avatars.githubusercontent.com/u/2472?v=4",
+            "html_url": "https://github.com/detain",
+            "type": "User"
+        },
+        "html_url": "https://github.com/detain/sugarcraft",
+        "url": "https://api.github.com/repos/detain/sugarcraft",
+        "pushed_at": "2026-11-04T08:15:00Z"
+    },
+    "sender": {
+        "login": "detain",
+        "id": 2472,
+        "node_id": "MDQ6VXNlcjI0NzI=",
+        "avatar_url": "https://avatars.githubusercontent.com/u/2472?v=4",
+        "url": "https://api.github.com/users/detain",
+        "html_url": "https://github.com/detain"
+    }
+}

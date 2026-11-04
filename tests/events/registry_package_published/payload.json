@@ -1,0 +1,106 @@
+{
+    "action": "published",
+    "registry_package": {
+        "id": 8123456,
+        "created_at": "2026-11-03T21:40:12Z",
+        "updated_at": "2026-11-03T21:40:12Z",
+        "html_url": "https://github.com/detain/sugarcraft/packages/8123456",
+        "name": "@detain/sugarcraft",
+        "url": "https://api.github.com/packages/8123456",
+        "description": "Shared sugarcraft UI building blocks",
+        "package_type": "Npm",
+        "owner": {
+            "login": "detain",
+            "id": 2472,
+            "node_id": "MDQ6VXNlcjI0NzI=",
+            "avatar_url": "https://avatars.githubusercontent.com/u/2472?v=4",
+            "url": "https://api.github.com/users/detain",
+            "html_url": "https://github.com/detain",
+            "type": "User",
+            "site_admin": false
+        },
+        "package_version": {
+            "id": 4093211,
+            "name": "2.1.0",
+            "url": "https://api.github.com/packages/8123456/versions/4093211",
+            "html_url": "https://github.com/detain/sugarcraft/packages/8123456?version=2.1.0",
+            "version": "2.1.0",
+            "summary": "sugarcraft 2.1.0",
+            "package_files": [
+                {
+                    "id": 92167,
+                    "name": "detain-sugarcraft-2.1.0.tgz",
+                    "size": 18412,
+                    "content_type": "application/octet-stream",
+                    "download_url": "https://example.com/detain-sugarcraft-2.1.0.tgz"
+                },
+                {
+                    "id": 92168,
+                    "name": "shasum.json",
+                    "size": 210,
+                    "content_type": "application/json",
+                    "download_url": "https://example.com/shasum.json"
+                }
+            ],
+            "installation_command": "npm install @detain/sugarcraft",
+            "registry": {
+                "about_url": "https://help.github.com/en/github/administering-a-repository/about-github-packages",
+                "name": "GitHub npm registry",
+                "type": "Npm",
+                "url": "https://npm.pkg.github.com/@detain",
+                "vendor": "GitHub Inc"
+            },
+            "target_commitish": "master",
+            "target_oid": "5b8305aa1f8a09cc",
+            "metadata": [],
+            "created_at": "2026-11-03T21:40:12Z",
+            "updated_at": "2026-11-03T21:40:12Z"
+        },
+        "user": {
+            "login": "detain",
+            "id": 2472,
+            "avatar_url": "https://avatars.githubusercontent.com/u/2472?v=4",
+            "url": "https://api.github.com/users/detain",
+            "html_url": "https://github.com/detain",
+            "type": "User",
+            "site_admin": false
+        },
+        "author": {
+            "login": "detain",
+            "id": 2472,
+            "avatar_url": "https://avatars.githubusercontent.com/u/2472?v=4",
+            "url": "https://api.github.com/users/detain",
+            "html_url": "https://github.com/detain",
+            "type": "User",
+            "site_admin": false
+        }
+    },
+    "repository": {
+        "id": 185882436,
+        "node_id": "MDEwOlJlcG9zaXRvcnkxODU4ODI0MzY=",
+        "name": "sugarcraft",
+        "full_name": "detain/sugarcraft",
+        "private": false,
+        "owner": {
+            "login": "detain",
+            "id": 2472,
+            "avatar_url": "https://avatars.githubusercontent.com/u/2472?v=4",
+            "html_url": "https://github.com/detain",
+            "type": "User"
+        },
+        "html_url": "https://github.com/detain/sugarcraft",
+        "description": null,
+        "url": "https://api.github.com/repos/detain/sugarcraft",
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2026-11-01T10:00:00Z",
+        "pushed_at": "2026-11-03T21:00:00Z"
+    },
+    "sender": {
+        "login": "detain",
+        "id": 2472,
+        "node_id": "MDQ6VXNlcjI0NzI=",
+        "avatar_url": "https://avatars.githubusercontent.com/u/2472?v=4",
+        "url": "https://api.github.com/users/detain",
+        "html_url": "https://github.com/detain"
+    }
+}

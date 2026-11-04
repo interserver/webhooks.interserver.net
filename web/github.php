@@ -7,6 +7,15 @@ declare(strict_types=1);
  * @link https://github.com/organizations/interserver/settings/hooks/359889086?tab=deliveries
  */
 
+/**
+ * Test seam: the PHPUnit helpers suite loads this file only for its pure
+ * functions (buildDedupKey, filterWebhookPayload, ...). Skip the response
+ * headers, the request pipeline and the gitignored src/config.php require.
+ */
+if (defined('GITHUB_WEBHOOK_HELPERS_ONLY')) {
+    return;
+}
+
 header('Content-Type: text/plain; charset=utf-8');
 http_response_code(500);
 
@@ -345,6 +354,21 @@ function buildDedupKey(string $eventType, string $repo, array $payload): string
         case 'status':
             $sha = $getSha($payload, 'sha');
             return $sha !== '' ? "github:commit:{$repo}:{$sha}" : "github:status:{$repo}";
+        case 'registry_package':
+        case 'package':
+            // registry_package is current, package is the legacy event name.
+            // Keying on name+version collapses published/updated storms that
+            // would otherwise queue N identical envelopes per release.
+            $pkg = $payload['registry_package'] ?? $payload['package'] ?? [];
+            $packageName = (string)($pkg['name'] ?? '');
+            if ($packageName === '') {
+                return "github:{$eventType}:{$repo}";
+            }
+            $packageVersion = (string)($pkg['package_version']['name'] ?? $pkg['package_version']['version'] ?? '');
+            if ($packageVersion === '') {
+                $packageVersion = 'latest';
+            }
+            return "github:package:{$repo}:{$packageName}:{$packageVersion}";
         case 'deployment':
         case 'deployment_status':
             $sha = $getSha($payload['deployment'] ?? [], 'sha');
