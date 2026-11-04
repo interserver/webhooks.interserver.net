@@ -21,7 +21,7 @@ php scripts/github-code-review.php
 - **Logs**: `log/Y/m/d/` — JSON files named `His_eventtype_action_user_repo.json` (verbosity controlled by `LOG_LEVEL`)
 - **Code review**: `src/CodeReviewQueue.php` enqueues push events for async review by `scripts/github-code-review.php`; `scripts/github-code-review-list.php` lists queued review jobs
 - **Field analysis**: `scripts/analyze_fields.php`, `scripts/filter_webhook.php`, `scripts/filter_webhook_batch.php` produce reports under `field_analysis_full/` (per-group JSON, `frequency_matrix.json`, `FIELD_CATEGORIZATION.md`)
-- **Tests**: `tests/` via `phpunit.xml` · fixtures in `tests/events/{event_name}/` · `tests/GithubPackageWebhookTest.php` loads the pure helpers in `web/github.php` (`buildDedupKey`, `filterWebhookPayload`) by defining `GITHUB_WEBHOOK_HELPERS_ONLY` before `require`
+- **Tests**: `tests/` via `phpunit.xml` · fixtures in `tests/events/{event_name}/` · `tests/GithubPackageWebhookTest.php` loads the pure helpers in `web/github.php` (`buildDedupKey`, `filterWebhookPayload`, `buildWebhookWhitelist`, `addUniversalRepoFields`) by defining `GITHUB_WEBHOOK_HELPERS_ONLY` before `require`; it filters the `tests/events/registry_package_container_published/` fixture (payload + type only) through `field_analysis_full/field_categories.php`
 - **Quality**: `phpstan.neon` · `phpstan-bootstrap.php` · `.php-cs-fixer.dist.php` (PSR2 + PHP74Migration)
 - **CI**: `.github/` — GitHub Actions workflows (`.github/workflows/ci.yml`)
 

@@ -665,6 +665,11 @@ return [
             'data.registry_package.package_version.name',
             'data.registry_package.package_version.version',
             'data.registry_package.package_version.summary',
+            'data.registry_package.package_version.html_url',  // Per-version page (top-level html_url 404s for user-owned containers)
+            'data.registry_package.package_version.package_url',  // e.g. "ghcr.io/detain/phlix-hub:latest"
+            'data.registry_package.package_version.target_oid',   // Commit SHA the version was built from
+            'data.registry_package.package_version.container_metadata.tag.name',    // Container tag ("" for untagged platform manifests)
+            'data.registry_package.package_version.container_metadata.tag.digest',
 
             // Author
             'data.registry_package.user.login',
@@ -702,6 +707,11 @@ return [
             'data.package.package_version.name',
             'data.package.package_version.version',
             'data.package.package_version.summary',
+            'data.package.package_version.html_url',
+            'data.package.package_version.package_url',
+            'data.package.package_version.target_oid',
+            'data.package.package_version.container_metadata.tag.name',
+            'data.package.package_version.container_metadata.tag.digest',
 
             // Author
             'data.package.user.login',

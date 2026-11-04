@@ -1,1 +1,1 @@
-📦 Codertocat published [npm package **hello-world-npm@1.0.0**](https://github.com/Codertocat/hello-world-npm/packages/10696) on [**Codertocat/hello-world-npm**](https://github.com/Codertocat/hello-world-npm).
+📦 Codertocat published [npm package **hello-world-npm@1.0.0**](https://github.com/Codertocat/hello-world-npm/packages/10696?version=1.0.0) on [**Codertocat/hello-world-npm**](https://github.com/Codertocat/hello-world-npm).

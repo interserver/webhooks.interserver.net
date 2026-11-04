@@ -161,4 +161,66 @@ class GithubPackageWebhookTest extends TestCase
         $this->assertStringContainsString('**registry_package**', $text);
         $this->assertStringContainsString('(published)', $text);
     }
+
+    // ── Container (ghcr.io) packages — real delivery fixture ────────────────
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function filteredContainerFixture(): array
+    {
+        $fixture = $this->loadFixture('registry_package_container_published');
+        $categories = require __DIR__ . '/../field_analysis_full/field_categories.php';
+        $whitelist = addUniversalRepoFields(buildWebhookWhitelist($categories));
+        foreach ($categories['per_event'][$fixture['type']] as $field) {
+            $whitelist[$field] = true;
+        }
+        return filterWebhookPayload($fixture['payload'], $whitelist, $fixture['type']);
+    }
+
+    public function testContainerTagAndVersionUrlSurviveFiltering(): void
+    {
+        $pv = $this->filteredContainerFixture()['registry_package']['package_version'];
+        $this->assertSame('latest', $pv['container_metadata']['tag']['name']);
+        $this->assertStringStartsWith('sha256:', $pv['container_metadata']['tag']['digest']);
+        $this->assertSame('https://github.com/users/detain/packages/container/phlix-hub/1499627176', $pv['html_url']);
+        $this->assertSame('ghcr.io/detain/phlix-hub:latest', $pv['package_url']);
+        $this->assertSame(40, strlen((string)$pv['target_oid']));
+        // Bulky container blobs stay out.
+        $this->assertArrayNotHasKey('manifest', $pv['container_metadata']);
+        $this->assertArrayNotHasKey('labels', $pv['container_metadata']);
+    }
+
+    public function testContainerTextUsesTagAndWorkingLink(): void
+    {
+        $text = (new GithubMessageBuilder('registry_package', $this->filteredContainerFixture()))->build()['text'];
+        $this->assertSame(
+            '📦 github-actions[bot] published [container package **phlix-hub:latest**]'
+            . '(https://github.com/users/detain/packages/container/phlix-hub/1499627176) '
+            . 'on [**detain/phlix-server**](https://github.com/detain/phlix-server).',
+            $text
+        );
+    }
+
+    public function testUntaggedContainerShowsShortDigestAndSkipsBrokenUrl(): void
+    {
+        $payload = [
+            'action' => 'published',
+            'registry_package' => [
+                'name' => 'phlix-hub',
+                'package_type' => 'CONTAINER',
+                'html_url' => 'https://github.com/detain/packages/12329883',
+                'package_version' => [
+                    'name' => 'sha256:ef7e3ab209e9b8bc65b5d57e13fa9ea929206ed323c68cf62bd8b6da122cc229',
+                    'container_metadata' => ['tag' => ['name' => '']],
+                ],
+            ],
+            'repository' => ['full_name' => 'detain/phlix-server'],
+            'sender' => ['login' => 'github-actions[bot]', 'avatar_url' => 'https://example.com/a.png'],
+        ];
+        $text = (new GithubMessageBuilder('registry_package', $payload))->build()['text'];
+        $this->assertStringContainsString('**phlix-hub@sha256:ef7e3ab209e9**', $text);
+        $this->assertStringContainsString('](https://github.com/detain/phlix-server/packages)', $text);
+        $this->assertStringNotContainsString('github.com/detain/packages/12329883', $text);
+    }
 }

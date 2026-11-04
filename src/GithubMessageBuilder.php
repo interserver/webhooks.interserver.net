@@ -347,17 +347,66 @@ class GithubMessageBuilder
 
         $Action = (string)($Message['action'] ?? 'published');
         $Type = strtolower((string)($Package['package_type'] ?? 'package'));
-        $Version = (string)($Package['package_version']['name'] ?? $Package['package_version']['version'] ?? '');
-        $Label = $Version !== '' ? "{$PackageName}@{$Version}" : $PackageName;
+        $Label = self::packageLabel($Package, $PackageName, $Type);
 
         $Subject = "{$Type} package **{$Label}**";
-        $PackageUrl = (string)($Package['html_url'] ?? '');
+        $PackageUrl = self::packageUrl($Package, $RepositoryName);
         if ($PackageUrl !== '') {
             $Subject = "[{$Subject}]({$PackageUrl})";
         }
 
         return "📦 {$Alias} {$Action} {$Subject} "
              . "on [**{$RepositoryName}**](https://github.com/{$RepositoryName}).";
+    }
+
+    /**
+     * Human label for a package version:
+     *   container with a tag  → "phlix-hub:latest" (docker image reference)
+     *   digest-only version   → "phlix-hub@sha256:00fdf23e8ee8" (12-hex short id)
+     *   anything else         → "@detain/sugarcraft@2.1.0", or the bare name
+     * Kept in step with packageLabel() in the Teams bot's notificationConsumer.js.
+     *
+     * @param array<string, mixed> $Package
+     */
+    private static function packageLabel(array $Package, string $PackageName, string $Type): string
+    {
+        $Version = is_array($Package['package_version'] ?? null) ? $Package['package_version'] : [];
+        $TagMeta = $Version['container_metadata']['tag'] ?? null;
+        $IsContainer = in_array($Type, ['container', 'docker', 'container_registry'], true) || is_array($TagMeta);
+        $Tag = is_array($TagMeta) ? trim((string)($TagMeta['name'] ?? '')) : '';
+        if ($IsContainer && $Tag !== '') {
+            return "{$PackageName}:{$Tag}";
+        }
+
+        $RawVersion = trim((string)($Version['name'] ?? $Version['version'] ?? ''));
+        if (preg_match('/^sha256:([0-9a-f]{12})[0-9a-f]*$/i', $RawVersion, $Match)) {
+            $RawVersion = 'sha256:' . strtolower($Match[1]);
+        }
+        return $RawVersion !== '' ? "{$PackageName}@{$RawVersion}" : $PackageName;
+    }
+
+    /**
+     * Best working link: the per-version page, then the package page — unless
+     * it is GitHub's https://github.com/{owner}/packages/{id} shape, which
+     * 404s for user-owned container packages — then the repo's packages tab.
+     *
+     * @param array<string, mixed> $Package
+     */
+    private static function packageUrl(array $Package, string $RepositoryName): string
+    {
+        $Safe = static function ($Url): string {
+            $Url = trim((string)$Url);
+            return preg_match('#^https://[^()\s]+$#i', $Url) ? $Url : '';
+        };
+        $VersionUrl = $Safe($Package['package_version']['html_url'] ?? '');
+        if ($VersionUrl !== '') {
+            return $VersionUrl;
+        }
+        $PackageUrl = $Safe($Package['html_url'] ?? '');
+        if ($PackageUrl !== '' && !preg_match('#^https://github\.com/[^/]+/packages/\d+/?$#i', $PackageUrl)) {
+            return $PackageUrl;
+        }
+        return $RepositoryName !== '' ? "https://github.com/{$RepositoryName}/packages" : '';
     }
 
     private function buildDefaultText(string $EventType, array $Message, string $RepositoryName, string $Alias): string

@@ -1,1 +1,1 @@
-📦 detain published [npm package **@detain/sugarcraft@2.1.0**](https://github.com/detain/sugarcraft/packages/8123456) on [**detain/sugarcraft**](https://github.com/detain/sugarcraft).
+📦 detain published [npm package **@detain/sugarcraft@2.1.0**](https://github.com/detain/sugarcraft/packages/8123456?version=2.1.0) on [**detain/sugarcraft**](https://github.com/detain/sugarcraft).
