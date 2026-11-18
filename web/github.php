@@ -315,7 +315,7 @@ function pickRoom(string $repo): string
         || in_array($repo, ['detain/CandyCore', 'detain/scoop-emulators', 'detain/detain', 'detain/sugarcraft', 'detain/watchable', 'detain/php-dup-finder', 'interserver/interserver-api-samples'], true)) {
         return 'int-dev-announce';
     }
-    return 'int-development';
+    return 'notifications';
 }
 
 function buildDedupKey(string $eventType, string $repo, array $payload): string
